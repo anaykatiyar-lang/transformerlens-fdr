@@ -86,17 +86,22 @@ Returned by the auditor. Contains:
 
 ## 💻 Quick Start
 
-To install and run a full GPT-2 IOI audit script:
-
+### Option 1: Install Directly from GitHub
+Anyone can install this directly into their environment without needing to clone the repo:
 ```bash
-# Set up environment
-python -m venv venv
-# Windows: .\venv\Scripts\activate
-# Linux/Mac: source venv/bin/activate
+pip install git+https://github.com/anaykatiyar-lang/transformerlens-fdr.git
+```
+
+### Option 2: Clone for Local Development
+If you want to edit the code or run the tutorials:
+```bash
+git clone https://github.com/anaykatiyar-lang/transformerlens-fdr.git
+cd transformerlens-fdr
 
 # Install editable with tests
 pip install -e .[test]
 
-# Run the provided example script!
+# Run the provided example scripts!
 python example_usage.py
+python advanced_tutorial.py
 ```
