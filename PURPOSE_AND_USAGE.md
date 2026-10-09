@@ -1,50 +1,25 @@
 # Purpose and usage
 
-TransformerLens-FDR is a research add-on for analyzing activation-patching experiments in TransformerLens. I built it to make component-level effects easier to compare and to provide an explicit route from those measurements to multiple-testing results when the experiment supports valid inference.
+TransformerLens-FDR helps compare activation-patching effects across model components and, when a defensible null model is available, adjust valid p-values for multiple testing.
 
-This guide explains the problem the package addresses, how to run an audit, how to select a metric and a null model, and what conclusions the outputs do and do not support.
+## Choose your inference path
 
-## Why adjust for multiple testing?
+**Which best describes your experiment? Select a card to see what to do.**
 
-An activation-patching study can test many attention heads, MLP layers, or residual-stream positions. Even if every component has no real effect, some measurements can look large by chance. A fixed magnitude cutoff or a top-*k* list does not account for the number of components searched.
+<details>
+<summary>I'm exploring, or I don't have a defensible no-effect comparison</summary>
 
-False Discovery Rate (FDR) procedures adjust valid p-values across a family of tests. At level $\alpha$, the target is to control the expected fraction of false discoveries among the hypotheses rejected:
+Run the default `method="none"`. You get effect estimates and descriptive outlier scores, but no p-values, q-values, or significance mask. This is the right choice when you are still exploring or cannot explain what “no effect” should look like.
 
-$$ \mathrm{FDR} = \mathbb{E}\left[\frac{V}{\max(R, 1)}\right] \leq \alpha $$
+</details>
 
-Here, $R$ is the number of rejected hypotheses and $V$ is the number of those rejections that are false. This is a long-run guarantee under the method's assumptions; it does not promise a particular false-discovery fraction in one analysis. FDR adjustment also cannot repair invalid p-values or an unsuitable null model.
+<details>
+<summary>I have matched prompts and their effects are independent and symmetric around zero</summary>
 
-## A practical workflow
-
-1. **Define the behavior.** Choose a score that represents the model behavior you want to study. For next-token preference, the built-in `logit_difference` subtracts the alternative token's logit from the target token's logit for each prompt.
-2. **Specify the comparison.** Prepare matched clean and corrupted prompts, decide the target and alternative outcomes before inspecting results, and use the same metric on clean, corrupted, and patched runs.
-3. **Inspect effect estimates.** Run the example in [`example_usage.py`](example_usage.py). It loads GPT-2 and uses one prompt, so it is a descriptive demonstration; it does not estimate prompt-to-prompt variability or make significance claims.
-4. **Choose whether inference is justified.** If you have a defensible no-effect comparison, select one of the null methods below. Otherwise leave the default method (`"none"`) and report the measurements as exploratory.
-5. **Interpret discoveries as candidates.** An FDR-significant component is a candidate under the chosen metric, prompt set, null, and correction method. It is not proof that the component has a general causal role across tasks or prompts.
-
-## Choosing a metric
-
-The metric defines what “an effect” means in the analysis.
-
-- For next-token preference, use `logit_difference(logits, correct_tokens, incorrect_tokens)`. A positive value means the model assigns a higher logit to the target token than to the alternative.
-- For another research question, provide a `metric_fn` that returns exactly one finite value per prompt, with shape `[B]`.
-- Use the same metric and outcome definition in every condition. Choose these before looking at which components rank highest.
-
-The package checks the output shape and finiteness of the metric. It cannot determine whether the metric is a good measure of the scientific outcome.
-
-## Choosing a null model
-
-A **null model** describes the measurements expected if the effect under study were absent. The package does not invent a null from the observed components.
-
-### No null: descriptive analysis
-
-With the default `method="none"`, the audit returns patching effects and descriptive outlier scores. It leaves p-values, q-values, and the significance mask unset. Use this mode for exploration or when you cannot justify a no-effect comparison.
-
-### Sign-flip test
-
-Set `method="signflip"` to compare per-prompt effects after changing their signs. This requires independent prompt effects and a null distribution symmetric around zero. Prompt examples that are duplicated, strongly related, or systematically skewed can violate those assumptions. The attainable p-value resolution is `1 / (n_perm + 1)`; use enough permutations for the number of hypotheses being tested.
+Use `method="signflip"`. The test changes the signs of per-prompt effects to build a null distribution. It relies on independent prompt effects and symmetry around zero; the package cannot verify those assumptions for you. Repeated or closely related prompts can break independence.
 
 ```python
+auditor = PatchingAuditor(model, metric_fn, n_perm=10_000)
 results = auditor.run_patching_audit(
     clean_tokens=clean_tokens,
     corrupted_tokens=corrupted_tokens,
@@ -54,59 +29,68 @@ results = auditor.run_patching_audit(
 )
 ```
 
-Use this only when the prompt sampling and effect distribution make the symmetry assumption credible. The code cannot verify that assumption from tensor shapes alone.
+The smallest possible p-value is `1 / (n_perm + 1)`. Use enough permutations to resolve the significance levels you care about.
 
-### Caller-supplied empirical null
+</details>
 
-An empirical null is built from control runs designed to represent the no-effect condition. Pass per-component control effects shaped `[n_controls, layers, components]` through `null_distribution`. Controls should reflect the specific relationship or behavior being tested. A shuffle is useful only if it truly removes that relationship. Where possible, validate the control design using separate data not used to build the null.
+<details>
+<summary>I have separate control runs that represent “no effect”</summary>
 
-## Correcting across components
+Pass the control effects as `null_distribution`, with shape `[n_controls, layers, components]`. Controls must preserve the experiment's relevant structure while removing the effect you are testing. For example, shuffling is only a good control if it actually breaks the relationship of interest. If possible, check the control design on separate data.
 
-After p-values are computed, the auditor adjusts them across the tested family:
+</details>
 
-- **Benjamini–Hochberg (`fdr_bh`)** controls FDR under independent tests and certain positive-dependence conditions.
-- **Benjamini–Yekutieli (`fdr_by`)** controls FDR under arbitrary dependence between tests when the individual p-values are valid. It is usually more conservative.
+## Once you have p-values: account for the number of components
 
-Neither correction method makes an invalid p-value valid. If the null is misspecified, or if the p-values are not calibrated, the corrected results are not trustworthy evidence.
+A search across many heads or other components can produce small p-values by chance. FDR adjustment accounts for that search. The target is a long-run expected proportion of false discoveries among the results called significant:
 
-## Reading the outputs
+$$ \mathrm{FDR} = \mathbb{E}\left[\frac{V}{\max(R, 1)}\right] \leq \alpha $$
 
-- `raw_patching_effects` are average normalized patching effects for each component.
-- `per_prompt_effects` show how those effects vary across prompts.
-- `p_values` are unadjusted results from the selected null method; `q_values` adjust for testing multiple components.
-- `significant_mask` marks components passing the selected FDR threshold. It is only present when a null method was used.
-- `outlier_scores` rank unusual effects for description. They are not p-values.
-- `cli_score` is the Circuit Localization Index (CLI): a summary of whether absolute effects are concentrated in a few components or spread across many. It is not a significance test.
-- `calibrated` and `null_description` report whether a null method ran and which method was selected; they do not independently establish that the assumptions hold.
+Here, `R` is the number of results called significant and `V` is the false ones among them. It is not a promise about the false-discovery fraction in one run. Adjustment cannot fix p-values made from an unsuitable null.
 
-## Mathematical definitions
+<details>
+<summary>Which adjustment should I use?</summary>
 
-The normalized patching effect measures the part of the clean-to-corrupted score gap recovered by replacing an activation:
+- **Benjamini–Hochberg (`fdr_bh`)** is less conservative; it assumes independent tests or certain positive dependence.
+- **Benjamini–Yekutieli (`fdr_by`)** allows arbitrary dependence when each p-value is valid, but is usually more conservative.
+
+When unsure, report which method you chose and why. Neither method validates the null model or the p-values supplied to it.
+
+</details>
+
+## Define the effect before looking at results
+
+The metric says what counts as an effect. For next-token preference, `logit_difference(logits, correct_tokens, incorrect_tokens)` subtracts the alternative token's logit from the target token's logit. For another question, pass a `metric_fn` that returns one finite value per prompt, with shape `[B]`. Use the same score and outcome definition for clean, corrupted, and patched runs.
+
+The normalized patching effect is the share of the clean-to-corrupted score gap recovered by replacing an activation:
 
 $$ P = \frac{M_{\text{patched}} - M_{\text{corrupted}}}{M_{\text{clean}} - M_{\text{corrupted}}} $$
 
-A value near $0$ indicates little recovery; $1$ indicates recovery of the clean–corrupted gap; values above $1$ indicate overshoot. The ratio is undefined when clean and corrupted scores are equal.
+A value near 0 means little recovery; 1 means the full gap was recovered; above 1 means overshoot. The ratio is undefined if clean and corrupted scores are equal.
 
-For the CLI, $w_i$ is component $i$'s share of the total absolute patching effect; it is not a statistical p-value:
+## Read the results
 
-$$ w_i = \frac{|P_i|}{\sum_j |P_j| + \epsilon} $$
-$$ H = -\sum_i w_i \log_2(w_i + \epsilon) $$
-$$ \mathrm{CLI} = 1 - \frac{H}{\log_2(N)} $$
+| Result | What it tells you |
+| --- | --- |
+| `raw_patching_effects` | Average normalized effect for each component |
+| `per_prompt_effects` | How effects vary across prompts |
+| `p_values` / `q_values` | Unadjusted / multiple-testing-adjusted values, when inference ran |
+| `significant_mask` | Components passing the selected FDR threshold |
+| `outlier_scores` | Descriptive ranking; not significance tests |
+| `cli_score` | Whether absolute effects are concentrated in a few components; not significance or causality |
 
-The CLI describes concentration in the observed effect map. It does not show that the effects differ from a null or that the same components matter in another setting.
+Treat selected components as candidates for follow-up patching or ablation. A result applies to the chosen metric, prompts, null, and correction method; it does not establish a general causal role.
 
-## Published reference check
+## Run a published reference check
 
-The package's published-reference test uses the 15 ordered p-values in Example 3.2 of Benjamini and Hochberg (1995). At FDR level 0.05, it checks that the implementation rejects the same first four hypotheses as the paper's procedure.
-
-Run it with:
+The published-reference test checks the Benjamini–Hochberg implementation against Example 3.2 of Benjamini and Hochberg (1995): at level 0.05, the same first four hypotheses should be rejected.
 
 ```bash
 python -m pytest -q tests/test_published_benchmark.py
 ```
 
-Reference: Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing,” *Journal of the Royal Statistical Society: Series B*, 57(1), 289–300. [DOI: 10.1111/j.2517-6161.1995.tb02031.x](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x). [Full text](https://www.stat.cmu.edu/~ryantibs/journalclub/benjamini_1995.pdf).
+Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing,” *Journal of the Royal Statistical Society: Series B*, 57(1), 289–300. [DOI](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x) · [Full text](https://www.stat.cmu.edu/~ryantibs/journalclub/benjamini_1995.pdf).
 
 ## Scope and limitations
 
-This reference check validates the multiple-testing adjustment on one published example. It does not validate every method of generating p-values, establish that a particular empirical null fits every task, or demonstrate calibration across all TransformerLens models and datasets. Calibration depends on the metric, prompt sampling, null model, and dependence assumptions. Report those choices with results, and treat the CLI and outlier scores as descriptive summaries rather than significance or causal evidence.
+This reference check validates one published multiple-testing example. It does not validate every way of generating p-values, every control design, or calibration across all models and datasets. Calibration depends on the metric, prompts, null model, and dependence assumptions. The example in [`example_usage.py`](example_usage.py) uses GPT-2 and one prompt, so it demonstrates the workflow but does not make significance claims. The CLI and outlier scores are descriptive summaries, not significance tests or evidence of causality.
