@@ -24,6 +24,43 @@ def test_fdr_bh_adjustment():
     assert passed_mask[1, 3].item() is False
 
 
+def test_bh_q_values_match_hand_calculation():
+    """BH adjustment is independent of the model that produced the p-values."""
+    p_values = torch.tensor([0.01, 0.03, 0.04, 0.5], dtype=torch.float64)
+    q_values, _ = apply_fdr_adjustment(p_values, alpha=0.05, method="fdr_bh")
+    expected = torch.tensor(
+        [0.04, 0.05333333333333334, 0.05333333333333334, 0.5],
+        dtype=torch.float64,
+    )
+    assert torch.allclose(q_values, expected, atol=1e-12, rtol=0)
+
+
+@pytest.mark.parametrize(
+    "p_values",
+    [
+        torch.tensor([], dtype=torch.float32),
+        torch.tensor([float("nan")]),
+        torch.tensor([float("inf")]),
+        torch.tensor([-0.01]),
+        torch.tensor([1.01]),
+    ],
+)
+def test_fdr_rejects_invalid_p_values(p_values):
+    with pytest.raises((TypeError, ValueError)):
+        apply_fdr_adjustment(p_values)
+
+
+@pytest.mark.parametrize("alpha", [0.0, 1.0, -0.1, 1.1])
+def test_fdr_rejects_invalid_alpha(alpha):
+    with pytest.raises(ValueError, match="alpha"):
+        apply_fdr_adjustment(torch.tensor([0.01, 0.5]), alpha=alpha)
+
+
+def test_fdr_rejects_unsupported_method():
+    with pytest.raises(ValueError, match="method"):
+        apply_fdr_adjustment(torch.tensor([0.01, 0.5]), method="bonferroni")
+
+
 def test_fdr_by_adjustment():
     """Benjamini-Yekutieli is more conservative but should still find strong signals."""
     p_values = torch.tensor([

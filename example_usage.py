@@ -1,7 +1,7 @@
 import torch
 import time
 from transformer_lens import TransformerBridge
-from transformerlens_fdr import PatchingAuditor, logit_difference, plot_fdr_heatmap, HOOK_CONFIGS
+from transformerlens_fdr import PatchingAuditor, logit_difference, HOOK_CONFIGS
 
 def main():
     # 1. Load a small HookedTransformer model for testing
@@ -40,8 +40,7 @@ def main():
         model=model,
         metric_fn=logit_difference,
         fdr_threshold=0.05,
-        fdr_method="fdr_by",        # Safer for correlated heads
-        n_control_samples=10,       # Small number for quick CPU demo
+        fdr_method="fdr_by",        # Requires valid p-values; BY cannot calibrate them
         hook_type="attn_head",
     )
     
@@ -64,21 +63,14 @@ def main():
     top = results.summary_df.sort_values("raw_effect", ascending=False).head(10)
     print(top.to_string(index=False), flush=True)
     
-    passed_heads = results.passed_fdr_mask.sum().item()
-    total_heads = results.passed_fdr_mask.numel()
-    print(f"\nHeads passing FDR: {int(passed_heads)} / {total_heads}", flush=True)
-    
-    # 7. Validation: Joint Knockout / Cumulative Patching
-    if passed_heads > 0:
-        print(f"\nRunning Joint Patching on the {int(passed_heads)} surviving heads...", flush=True)
-        p_joint = auditor.run_joint_patching(
-            clean_tokens=clean_tokens,
-            corrupted_tokens=corrupted_tokens,
-            correct_tokens=correct_tokens,
-            incorrect_tokens=incorrect_tokens,
-            patching_mask=results.passed_fdr_mask
-        )
-        print(f"Joint Knockout Restoration (P_joint): {p_joint:.4f}", flush=True)
+    if results.calibrated:
+        passed_heads = results.significant_mask.sum().item()
+        total_heads = results.significant_mask.numel()
+        print(f"\nCalibrated heads passing FDR: {int(passed_heads)} / {int(total_heads)}", flush=True)
+    else:
+        print("\nExploratory only: no p-values or FDR mask were computed.", flush=True)
+        print("Top heads by robust outlier score:", flush=True)
+        print(results.summary_df.sort_values("outlier_score", key=abs, ascending=False).head(10).to_string(index=False), flush=True)
         
     print(f"{'='*50}", flush=True)
 

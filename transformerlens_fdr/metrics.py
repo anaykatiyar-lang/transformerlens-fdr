@@ -6,18 +6,27 @@ def logit_difference(
     incorrect_tokens: torch.Tensor
 ) -> torch.Tensor:
     """
-    Computes Logit Difference (ΔL) = Logit(correct) - Logit(incorrect).
-    Assuming logits has shape [batch, seq_len, d_vocab] or [batch, d_vocab]
+    Computes per-prompt logit difference [B]: logit(correct) - logit(incorrect).
+    Logits may have shape [B, S, V] or [B, V]; for [B, S, V], the final
+    sequence position is used.
     """
     if logits.ndim == 3:
-        # Assuming last token is the one we care about
         logits = logits[:, -1, :]
-    
-    batch_indices = torch.arange(logits.size(0))
+    if logits.ndim != 2:
+        raise ValueError("logits must have shape [batch, vocab] or [batch, seq, vocab].")
+
+    correct_tokens = correct_tokens.reshape(-1).to(logits.device)
+    incorrect_tokens = incorrect_tokens.reshape(-1).to(logits.device)
+    if correct_tokens.numel() != logits.shape[0] or incorrect_tokens.numel() != logits.shape[0]:
+        raise ValueError("correct_tokens and incorrect_tokens must have one token id per prompt.")
+
+    batch_indices = torch.arange(logits.size(0), device=logits.device)
     correct_logits = logits[batch_indices, correct_tokens]
     incorrect_logits = logits[batch_indices, incorrect_tokens]
-    
-    return (correct_logits - incorrect_logits).mean()
+    return correct_logits - incorrect_logits
+
+
+logit_diff_per_prompt = logit_difference
 
 def normalized_patching_effect(
     patched_effect: torch.Tensor,
