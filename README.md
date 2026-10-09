@@ -24,12 +24,43 @@ How much does patching a clean activation recover the clean metric?
 
 $$ P = \frac{M_{\text{patched}} - M_{\text{corrupted}}}{M_{\text{clean}} - M_{\text{corrupted}}} $$
 
-### 2. Inference and its assumptions
-`method="signflip"` uses per-prompt effects and requires independent/exchangeable prompt effects symmetric about zero under the null. Sign-flip validity depends on that assumption; the calibration harness includes symmetric null tests and separate skew diagnostics. Alternatively, pass a caller-generated null with shape `[n_null, layers, components]` so each component is compared to its own null distribution. A pooled null is available only by explicit opt-in and emits a warning.
+### 2. Inference: choose a null before interpreting results
 
-Benjamini-Hochberg and Benjamini-Yekutieli adjust valid p-values for the complete family of tests being reported. BH assumes independent or positively dependent tests; BY handles arbitrary dependence but is more conservative. Neither procedure fixes invalid p-values or a misspecified null. The smallest sign-flip p-value is `1 / (n_perm + 1)`. Choose enough permutations to resolve the correction threshold for the number of tests; for 144 tests at alpha 0.05, 3,000 permutations resolve the first BH threshold, while BY requires more.
+> **Quick check:** What would your data look like if the effect were absent? If you cannot give a defensible answer, keep the default `method="none"`. You will get exploratory effect and outlier summaries, but no p-values, q-values, or significance mask.
 
-For an empirical null, build the null from independent, task-appropriate negative controls and evaluate it on held-out controls. The null controls must represent the no-effect condition for the analysis. A shuffled or unrelated pair is useful only when that shuffle actually breaks the relationship being tested. Do not reuse the same controls to both estimate the null and claim its calibration.
+<details>
+<summary>Option 1 · Sign-flip test for matched prompts</summary>
+
+Use `method="signflip"` when per-prompt effects are independent (or exchangeable) and the no-effect distribution is symmetric around zero. Repeated or closely related prompts can break independence; skew can break symmetry. The package cannot check these assumptions for you.
+
+The smallest possible p-value is `1 / (n_perm + 1)`. Set `n_perm` when creating `PatchingAuditor`. For example, with 144 tests and target level 0.05, 3,000 permutations resolve the first Benjamini–Hochberg threshold. Benjamini–Yekutieli needs finer p-value resolution, so it requires more permutations.
+
+</details>
+
+<details>
+<summary>Option 2 · Empirical null from control runs</summary>
+
+Pass a caller-built `null_distribution` with shape `[n_null, layers, components]`. Use controls that preserve the experiment while removing the specific relationship you are testing. A shuffled or unrelated pair is a suitable control only if it really removes that relationship.
+
+Where possible, estimate the null from one set of controls and check calibration on separate, held-out controls. Do not use the same controls both to build the null and to claim that it is calibrated.
+
+</details>
+
+<details>
+<summary>After valid p-values · Choose an FDR correction</summary>
+
+FDR describes the long-run expected share of false results among those called significant:
+
+$$ \mathrm{FDR} = \mathbb{E}\left[\frac{V}{\max(R, 1)}\right] \leq \alpha $$
+
+`R` is the number called significant; `V` is the false ones among them. It is not a guarantee about the false-result share in one run.
+
+- **Benjamini–Hochberg (`fdr_bh`)** is less conservative and assumes independent tests or certain positive dependence.
+- **Benjamini–Yekutieli (`fdr_by`)** allows arbitrary dependence when the individual p-values are valid, but is more conservative.
+
+Neither correction can make invalid p-values or a poorly chosen null trustworthy. Report the null and correction you used.
+
+</details>
 
 ### 3. Circuit Localization Index ($\text{CLI}$)
 Describes how concentrated the absolute point estimates are. It is descriptive, not a significance test or evidence that a circuit is causal. A score near $1.0$ means concentrated effects; a score near $0.0$ means diffuse effects.
