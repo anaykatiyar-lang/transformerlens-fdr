@@ -3,9 +3,8 @@ import pandas as pd
 from typing import Callable, Dict, Any, Optional, List
 # HookedTransformer was removed in v4.0.0, we use Any for the model type hint
 from dataclasses import dataclass
-from .stats import compute_control_baseline, calculate_p_values, apply_fdr_adjustment
+from .stats import compute_robust_baseline, calculate_p_values, apply_fdr_adjustment, calculate_empirical_p_values
 from .metrics import normalized_patching_effect, circuit_localization_index
-import random
 
 # Supported hook types and their configurations
 HOOK_CONFIGS = {
@@ -63,7 +62,6 @@ class PatchingAuditor:
                 independent / positively-dependent tests, or 'fdr_by'
                 (Benjamini-Yekutieli) for arbitrarily dependent tests (safer for
                 correlated attention heads, but more conservative).
-            n_control_samples: Number of filler components to sample for baseline noise.
             hook_type: Component type to audit. One of 'attn_head', 'mlp_out', 'resid_mid'.
         """
         if hook_type not in HOOK_CONFIGS:
@@ -76,7 +74,6 @@ class PatchingAuditor:
         self.metric_fn = metric_fn
         self.fdr_threshold = fdr_threshold
         self.fdr_method = fdr_method
-        self.n_control_samples = n_control_samples
         self.hook_type = hook_type
         self._hook_cfg = HOOK_CONFIGS[hook_type]
 
@@ -206,44 +203,6 @@ class PatchingAuditor:
         return effect.unsqueeze(0)  # [1]
 
     # ------------------------------------------------------------------
-    # Control sampling
-    # ------------------------------------------------------------------
-
-    def _sample_control_effects(
-        self,
-        clean_cache,
-        corrupted_tokens: torch.Tensor,
-        correct_tokens: torch.Tensor,
-        incorrect_tokens: torch.Tensor,
-        n_layers: int,
-        n_components: int,
-        clean_metric: torch.Tensor,
-        corrupted_metric: torch.Tensor,
-    ) -> torch.Tensor:
-        """Samples control baseline effects by randomly patching components."""
-        control_samples: List[float] = []
-
-        for _ in range(self.n_control_samples):
-            l = random.randint(0, n_layers - 1)
-
-            if self._hook_cfg["has_head_dim"]:
-                h = random.randint(0, n_components - 1)
-                hook_name, hook_fn = self._patch_head_in_layer(clean_cache, l, h)
-            else:
-                hook_name, hook_fn = self._patch_whole_component(clean_cache, l)
-
-            patched_logits = self.model.run_with_hooks(
-                corrupted_tokens,
-                return_type="logits",
-                fwd_hooks=[(hook_name, hook_fn)],
-            )
-            patched_metric = self.metric_fn(patched_logits, correct_tokens, incorrect_tokens)
-            norm_effect = normalized_patching_effect(patched_metric, clean_metric, corrupted_metric)
-            control_samples.append(norm_effect.item())
-
-        return torch.tensor(control_samples, dtype=torch.float32, device=self.model.cfg.device)
-
-    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -253,10 +212,17 @@ class PatchingAuditor:
         corrupted_tokens: torch.Tensor,
         correct_tokens: torch.Tensor,
         incorrect_tokens: torch.Tensor,
+        null_distribution: Optional[torch.Tensor] = None,
     ) -> AuditResults:
         """
-        Executes activation patching, computes control noise,
+        Executes activation patching, computes p-values,
         applies FDR correction, and calculates CLI.
+        
+        Args:
+            null_distribution: An optional tensor of empirical null patching effects 
+                from repeated null trials. If provided, empirical p-values are computed. 
+                If not provided, a robust baseline (Median & Median Absolute Deviation) 
+                is estimated from the observed component effects themselves.
 
         For attention heads (hook_type='attn_head') this uses batched
         layer-level forward passes — one pass per layer instead of one per
@@ -290,16 +256,15 @@ class PatchingAuditor:
                 )
 
         # ---------- Statistical audit ----------
-        control_samples = self._sample_control_effects(
-            clean_cache, corrupted_tokens, correct_tokens, incorrect_tokens,
-            n_layers, n_components, clean_metric, corrupted_metric,
-        )
-
-        mu_ctrl, sigma_ctrl = compute_control_baseline(control_samples)
-
-        adjusted_effects = raw_patching_effects - mu_ctrl
-
-        p_values = calculate_p_values(raw_patching_effects, mu_ctrl, sigma_ctrl)
+        if null_distribution is not None:
+            adjusted_effects = raw_patching_effects - torch.median(null_distribution)
+            p_values = calculate_empirical_p_values(raw_patching_effects, null_distribution)
+        else:
+            # Fallback to robust estimation (treating sparse signals as outliers)
+            mu_ctrl, sigma_ctrl = compute_robust_baseline(raw_patching_effects)
+            adjusted_effects = raw_patching_effects - mu_ctrl
+            p_values = calculate_p_values(raw_patching_effects, mu_ctrl, sigma_ctrl)
+            
         q_values, passed_fdr_mask = apply_fdr_adjustment(
             p_values, alpha=self.fdr_threshold, method=self.fdr_method,
         )

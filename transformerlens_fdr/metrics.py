@@ -22,12 +22,19 @@ def logit_difference(
 def normalized_patching_effect(
     patched_effect: torch.Tensor,
     clean_effect: torch.Tensor,
-    corrupted_effect: torch.Tensor
+    corrupted_effect: torch.Tensor,
+    epsilon: float = 1e-8
 ) -> torch.Tensor:
     """
     Computes Normalized Patching Effect (P).
     """
-    return (patched_effect - corrupted_effect) / (clean_effect - corrupted_effect)
+    denominator = clean_effect - corrupted_effect
+    if torch.abs(denominator) < epsilon:
+        raise ValueError(
+            f"Undefined normalized effect: clean and corrupted metrics are too close "
+            f"(diff={denominator.item():.2e}). The null design might be flawed or task is trivial."
+        )
+    return (patched_effect - corrupted_effect) / denominator
 
 def circuit_localization_index(
     normalized_effects: torch.Tensor,
@@ -38,7 +45,13 @@ def circuit_localization_index(
     """
     # p(l, h) = |P(l, h)| / sum(|P(l', h')| + eps)
     abs_effects = torch.abs(normalized_effects)
-    p = abs_effects / (torch.sum(abs_effects) + epsilon)
+    sum_effects = torch.sum(abs_effects)
+    
+    if sum_effects < epsilon:
+        # No signal at all, return 0.0 (completely un-localized)
+        return 0.0
+        
+    p = abs_effects / (sum_effects + epsilon)
     
     # H_causal = -sum(p * log2(p + eps))
     h_causal = -torch.sum(p * torch.log2(p + epsilon))

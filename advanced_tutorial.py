@@ -30,7 +30,6 @@ def run_ood_transfer_verification(model, baseline_heads_mask):
         metric_fn=logit_difference,
         fdr_threshold=0.05,
         fdr_method="fdr_by",
-        n_control_samples=10, 
         hook_type="attn_head",
     )
     
@@ -71,7 +70,6 @@ def run_multi_dimensional_testing(model, clean_tokens, corrupted_tokens, correct
         metric_fn=logit_difference,
         fdr_threshold=0.05,
         fdr_method="fdr_bh",        # MLPs are independent per layer, BH is fine
-        n_control_samples=10, 
         hook_type="mlp_out",        # Targeting the Multi-Layer Perceptron!
     )
     
@@ -115,7 +113,6 @@ def main():
         metric_fn=logit_difference,
         fdr_threshold=0.05,
         fdr_method="fdr_by",
-        n_control_samples=10,
         hook_type="attn_head",
     )
     
