@@ -1,9 +1,0 @@
-torch>=2.0.0
-transformer_lens>=1.0.0
-scipy>=1.10.0
-statsmodels>=0.14.0
-pandas>=2.0.0
-plotly>=5.0.0
-
-[test]
-pytest>=7.0.0
