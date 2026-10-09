@@ -1,13 +1,11 @@
-"""First activation-patching example: inspect effects without significance claims."""
-
 import torch
 import time
 from transformer_lens import TransformerBridge
 from transformerlens_fdr import PatchingAuditor, logit_difference, HOOK_CONFIGS
 
 def main():
-    # 1. Load GPT-2 through the TransformerLens bridge.
-    print("Loading GPT-2 (the first run may download the model)...", flush=True)
+    # 1. Load a small HookedTransformer model for testing
+    print("Loading model (this may take a minute on first run)...", flush=True)
     t0 = time.time()
     model = TransformerBridge.boot_transformers("gpt2")
     model.enable_compatibility_mode()
@@ -59,9 +57,9 @@ def main():
     
     # 6. Review the Results
     print(f"\n{'='*50}", flush=True)
-    print(f"Effect-concentration summary (CLI): {results.cli_score:.4f}", flush=True)
+    print(f"Circuit Localization Index (CLI): {results.cli_score:.4f}", flush=True)
     print(f"Hook type audited: {results.hook_type}", flush=True)
-    print("\nHeads with the largest measured effects (this is not a significance ranking):", flush=True)
+    print(f"\nTop 10 heads by raw patching effect:", flush=True)
     top = results.summary_df.sort_values("raw_effect", ascending=False).head(10)
     print(top.to_string(index=False), flush=True)
     
@@ -70,11 +68,9 @@ def main():
         total_heads = results.significant_mask.numel()
         print(f"\nCalibrated heads passing FDR: {int(passed_heads)} / {int(total_heads)}", flush=True)
     else:
-        print(
-            "\nNo significance test was run. This example uses one prompt, so it "
-            "shows the measured effects for this case only.",
-            flush=True,
-        )
+        print("\nExploratory only: no p-values or FDR mask were computed.", flush=True)
+        print("Top heads by robust outlier score:", flush=True)
+        print(results.summary_df.sort_values("outlier_score", key=abs, ascending=False).head(10).to_string(index=False), flush=True)
         
     print(f"{'='*50}", flush=True)
 
