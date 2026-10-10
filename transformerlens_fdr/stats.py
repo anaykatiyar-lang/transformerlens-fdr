@@ -3,13 +3,18 @@ import numpy as np
 import scipy.stats as stats
 from statsmodels.stats.multitest import multipletests
 from typing import Tuple
+import math
 
 def compute_control_baseline(
     control_samples: torch.Tensor,
     epsilon: float = 1e-8
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Computes mean and std of control baseline samples.
+    """Return the mean and sample standard deviation of control values.
+
+    These moments alone do not establish a valid null model. They support the
+    normal-null route only when the control values are representative
+    and approximately normal; callers should prefer a validated empirical or
+    sign-flip null when those assumptions are not defensible.
     """
     if control_samples.numel() < 2:
         raise ValueError("Insufficient control samples to estimate baseline variance. Need at least 2.")
@@ -29,9 +34,11 @@ def compute_robust_baseline(
     effects: torch.Tensor,
     epsilon: float = 1e-8
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Computes a robust baseline (Median and Median Absolute Deviation) 
-    from the full distribution of effects, assuming true signals are sparse outliers.
+    """Compute a median/MAD baseline for descriptive outlier scores.
+
+    This is a robust descriptive heuristic. It is not a Gaussian null, does
+    not produce inferential p-values, and assumes signals are sparse relative
+    to the full set of effects.
     """
     if effects.numel() < 2:
         raise ValueError("Insufficient components to estimate baseline variance. Need at least 2.")
@@ -54,8 +61,12 @@ def calculate_p_values(
     sigma_ctrl: torch.Tensor,
     epsilon: float = 1e-8
 ) -> torch.Tensor:
-    """
-    Calculates two-tailed p-values using Z-scores against the control distribution.
+    """Calculate two-sided normal-approximation p-values from control moments.
+
+    This normal-null option assumes a representative control sample and a normal
+    null with the supplied mean and standard deviation. It remains available
+    for callers whose analysis explicitly uses those assumptions. The robust
+    descriptive baseline does not make this Gaussian inference valid.
     """
     if epsilon <= 0:
         raise ValueError("epsilon must be positive.")
@@ -116,24 +127,30 @@ def signflip_p_values(
     n_perm: int = 9999,
     two_sided: bool = True,
     generator: torch.Generator = None,
+    zero_effect_tolerance: float = 1e-8,
 ) -> torch.Tensor:
     """Paired sign-flip p-values for effects shaped [layers, components, prompts].
 
     The null hypothesis is that independent/exchangeable prompt effects are
     symmetric about zero. The same sign pattern is applied to every component
-    to preserve their dependence structure under the joint null.
+    to preserve their dependence structure under the joint null. Values whose
+    absolute magnitude is at most ``zero_effect_tolerance`` are set to zero
+    before computing the statistic; use a tolerance in normalized-effect units.
     """
     if effects.ndim != 3:
         raise ValueError("effects must have shape [layers, components, prompts].")
-    if n_perm < 1:
+    if not isinstance(n_perm, int) or n_perm < 1:
         raise ValueError("n_perm must be positive.")
+    if not math.isfinite(zero_effect_tolerance) or zero_effect_tolerance < 0:
+        raise ValueError("zero_effect_tolerance must be finite and non-negative.")
     if effects.shape[-1] < 2:
         raise ValueError("Sign-flip testing requires at least two prompt effects.")
     if not torch.isfinite(effects).all():
         raise ValueError("effects must be finite.")
 
     n_layers, n_components, n_prompts = effects.shape
-    x = effects.reshape(n_layers * n_components, n_prompts)
+    x = effects.reshape(n_layers * n_components, n_prompts).clone()
+    x[x.abs() <= zero_effect_tolerance] = 0
 
     def studentized(values: torch.Tensor) -> torch.Tensor:
         mean = values.mean(dim=-1)
@@ -194,3 +211,43 @@ def apply_fdr_adjustment(
     passed_fdr = torch.tensor(reject, dtype=torch.bool, device=p_values.device).reshape(p_values.shape)
     
     return q_values, passed_fdr
+
+
+def resolution_report(
+    n_tests: int,
+    alpha: float,
+    method: str,
+    p_min: float,
+) -> dict:
+    """Describe the rank needed for a discrete p-value to cross BH/BY.
+
+    ``n_tests`` is the number of p-values in the correction family, not a
+    user-supplied estimate. ``min_rank_for_any_rejection`` is a necessary
+    rank condition; it is not sufficient unless the ordered p-values meet
+    the step-up threshold at that rank.
+    """
+    if not isinstance(n_tests, int) or n_tests < 1:
+        raise ValueError("n_tests must be a positive integer.")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be strictly between 0 and 1.")
+    if method not in {"fdr_bh", "fdr_by"}:
+        raise ValueError("method must be 'fdr_bh' or 'fdr_by'.")
+    if not math.isfinite(p_min) or not 0 < p_min <= 1:
+        raise ValueError("p_min must be finite and in (0, 1].")
+
+    dependence_factor = (
+        1.0 if method == "fdr_bh"
+        else sum(1.0 / rank for rank in range(1, n_tests + 1))
+    )
+    first_threshold = alpha / (n_tests * dependence_factor)
+    min_rank = max(1, math.ceil(p_min * n_tests * dependence_factor / alpha))
+    attainable_rank = min_rank if min_rank <= n_tests else None
+    return {
+        "n_tests": n_tests,
+        "alpha": alpha,
+        "method": method,
+        "p_min": p_min,
+        "first_step_threshold": first_threshold,
+        "min_rank_for_any_rejection": attainable_rank,
+        "status": "attainable" if attainable_rank is not None else "no attainable rejection",
+    }
