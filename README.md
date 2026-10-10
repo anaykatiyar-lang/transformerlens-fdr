@@ -4,11 +4,6 @@
 [![TransformerLens v4.0.0+](https://img.shields.io/badge/transformer__lens-4.0.0+-orange.svg)](https://github.com/TransformerLensOrg/TransformerLens)
 [![PyPI version](https://img.shields.io/pypi/v/transformerlens-fdr)](https://pypi.org/project/transformerlens-fdr/)
 
-Install from PyPI:
-
-```bash
-pip install transformerlens-fdr
-```
 
 **Activation-patching analysis utilities for TransformerLens.** I built this package to make component patching effects easier to inspect and to provide an explicit, assumption-aware path from those effects to multiple-testing results.
 
@@ -224,14 +219,19 @@ Reference: Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Disco
 ---
 
 ## 💻 Quick Start
+### Option 1. Install from PyPI:
 
-### Option 1: Install Directly from GitHub
+```bash
+pip install transformerlens-fdr
+```
+
+### Option 2: Install Directly from GitHub
 Anyone can install this directly into their environment without needing to clone the repo:
 ```bash
 pip install git+https://github.com/anaykatiyar-lang/transformerlens-fdr.git
 ```
 
-### Option 2: Clone for Local Development
+### Option 3: Clone for Local Development
 If you want to edit the code or run the tutorials:
 ```bash
 git clone https://github.com/anaykatiyar-lang/transformerlens-fdr.git
