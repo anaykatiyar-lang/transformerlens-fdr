@@ -82,7 +82,7 @@ Where possible, estimate the null from one set of controls and check calibration
 
 ### Match the correction to the full search
 
-An audit corrects the p-values for the components in that audit. `family_size` reports the number of hypotheses, and `resolution_report` shows whether the smallest attainable p-value can cross the correction threshold. For example, 144 tests with BY and 9,999 sign flips have a minimum p-value of `0.0001`. One result at that minimum cannot pass the first step; at least two results must meet their rank-specific thresholds. That rank condition is necessary, not sufficient.
+An audit corrects the p-values for the components in that audit `family_size` reports the number of hypotheses, and `resolution_report` shows whether the smallest attainable p-value can cross the correction threshold. For example, 144 tests with BY and 9,999 sign flips have a minimum p-value of `0.0001`. One result at that minimum cannot pass the first step; at least two results must meet their rank-specific thresholds. That rank condition is necessary, not sufficient.
 
 If you searched several component types or runs as one family, combine their valid p-values before interpretation:
 
@@ -206,7 +206,7 @@ the groups are independent or that the selected mask is causal.
 
 ## 📚 Published Benchmark
 
-I check the Benjamini–Hochberg adjustment against the published 15-hypothesis example in Benjamini and Hochberg (1995). At a target FDR of 0.05, the implementation rejects the same four hypotheses as the paper's BH step-up procedure.
+I checked the Benjamini–Hochberg adjustment against the published 15-hypothesis example in Benjamini and Hochberg (1995). At a target FDR of 0.05, the implementation rejects the same four hypotheses as the paper's BH step-up procedure.
 
 The regression test uses the paper's ordered p-values and checks the rejected hypotheses directly:
 
