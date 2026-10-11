@@ -262,15 +262,32 @@ Reference: Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Disco
 
 ---
 
-## 🧪 Validation in this repository
+## Validation: what the checks show
 
-The published benchmark above validates the BH adjustment against the paper's 15-hypothesis example. Separate software tests exercise other parts of the implementation; these are implementation checks, not published empirical validation of TransformerLens research results:
+> **Published benchmark result:** The BH calculation reproduces Benjamini and Hochberg's 1995 example: **4 of 15 hypotheses are rejected** at a target FDR of 0.05.
 
-- `tests/test_stress.py` checks sign-flip results against exact enumeration on small cases, tests simulated p-value behavior under symmetric nulls, and includes toy-model cases with known effects.
-- `tests/test_calibration.py` checks null calibration and realized FDR in repeated simulations with normal, heavy-tailed, symmetric-mixture, and positively correlated effects. Its mean-zero, nonsymmetric cases are diagnostics, not passing calibration claims. Run the full 1,000-replication report with `python -m tests.test_calibration`.
-- `tests/test_bridge_native.py` checks audit shapes and finite outputs on a small native TransformerLens 4 bridge. `tests/test_bridge_integration.py` optionally checks a cached Hugging Face model (GPT-2 by default) when explicitly enabled.
+The rest of the test suite checks the implementation:
 
-The simulated BH checks cover the dependence structures generated in those tests. They do not prove BH is valid for arbitrary dependencies among head-level hypotheses. Sign-flip calibration is not established for skewed effects. Prompt-level sign flips treat prompts as independent units: repeated templates, multiple variants of one underlying example, or other clusters can make that unit inappropriate. Keep related templates together in the held-out helper, and do not describe prompt-level sign-flip results as calibrated when prompts are dependent. A held-out split helps assess selection on separate prompts; it does not repair a misspecified null.
+- **Sign-flip math:** compared with exact results on small examples; simulations check symmetric nulls.
+- **Known-answer examples:** toy models check whether planted component effects are recovered.
+- **TransformerLens 4 integration:** native bridge tests check hook integration. An optional GPT-2 test uses cached model weights.
+- **Skewed data:** reported as a diagnostic because sign-flip validity requires symmetry about zero.
+
+These checks support the software; they do not show that a null is right for your dataset or that results are calibrated for every model.
+
+**Run the published benchmark:**
+```bash
+python -m pytest -q tests/test_published_benchmark.py
+```
+
+**Run the synthetic and native-bridge checks:**
+```bash
+python -m pytest -q tests/test_stress.py tests/test_calibration.py tests/test_bridge_native.py
+```
+
+For the longer calibration report, run `python -m tests.test_calibration`.
+
+**Keep in mind:** sign-flip assumes independent prompt effects that are symmetric around zero. Repeated or related prompt templates can violate the independence assumption. BH's dependence guarantee is not established for every set of model components.
 
 ---
 
