@@ -1,32 +1,35 @@
 # TransformerLens-FDR 📊
 
-
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![TransformerLens v4.0.0+](https://img.shields.io/badge/transformer__lens-4.0.0+-orange.svg)](https://github.com/TransformerLensOrg/TransformerLens)
+[![PyPI version](https://img.shields.io/pypi/v/transformerlens-fdr)](https://pypi.org/project/transformerlens-fdr/)
 
 **Activation-patching analysis utilities for TransformerLens.** I built this package to make component patching effects easier to inspect and to provide an explicit, assumption-aware path from those effects to multiple-testing results.
 
 The package computes per-prompt patching effects and descriptive robust outlier scores. It returns FDR-adjusted significance results only when a caller supplies an empirical null or explicitly requests a sign-flip test. Those results are valid only when the null assumptions are appropriate and have been checked for the task.
 
----
-
-> **Published benchmark:** the implementation matches Benjamini and Hochberg’s 1995 15-hypothesis example, rejecting **4 of 15** hypotheses at an FDR target of 0.05.
-> Reproduce it with `python -m pytest -q tests/test_published_benchmark.py`.
-
 ## 🚀 Why Use FDR?
+
+<details>
+<summary>Why should I use FDR?</summary>
 
 This audit patches clean activations into a corrupted run. It asks whether those clean activations are sufficient to recover the chosen metric in that context; it does not test whether a component is necessary. Noising or ablating a component asks a different question. I do not treat a fixed effect-size cutoff as proof that a component belongs to a circuit. When many components are tested, false discoveries need to be considered explicitly.
 
 The default audit does not invent a null from the observed components. It reports exploratory outlier scores and leaves p-values, q-values, and the significance mask unset. For inference, use a per-component empirical null or request sign-flip testing over independent prompt pairs.
 
-### Which path should I use?
+<details>
+<summary>Which inference path should I use?</summary>
 
-| Your setup | Choose | What the result means |
-| --- | --- | --- |
-| You are exploring, or cannot defend a no-effect comparison | Default `method="none"` | Descriptive effects and outlier scores only; no p-values or FDR claim |
-| Prompt effects are independent, and each is symmetric about zero under its null | `method="signflip"` | FDR-adjusted results under those sign-flip assumptions; the package cannot verify them |
-| You have task-specific control runs that preserve the task structure while removing the relation of interest | `null_distribution=...` | Results relative to those controls, if the controls are a valid null for the stated metric and component family |
-| Effects are clustered or skewed, and neither sign-flip assumptions nor a defensible control design fit | Do not treat the output as calibrated inference | Use descriptive mode or design a task-appropriate null and validate it separately |
+- **Exploring, or no defensible no-effect comparison:** use the default `method="none"`. You get descriptive effects and outlier scores, not p-values or an FDR claim.
+- **Independent prompt effects symmetric about zero under the null:** use `method="signflip"`. Results rely on both assumptions; the package cannot verify them.
+- **Task-specific control runs that remove the relation being tested:** provide `null_distribution=...`. It must use the same metric, normalization, component mapping, and prompt count as the observed effects.
+- **Clustered or skewed effects without a defensible control design:** stay in descriptive mode until you can design and validate a suitable null.
+
+</details>
 
 Sign-flip is an explicit opt-in; it is not the default. It tests symmetry about zero, not merely a zero mean: a skewed, mean-zero null can still produce invalid p-values. The code applies shared random sign patterns across components to preserve their dependence in each permutation; this does not remove the need for independent prompt effects and valid marginal symmetry. No path can turn an unsuitable null into valid p-values.
+
+</details>
 
 ---
 
@@ -35,7 +38,9 @@ Sign-flip is an explicit opt-in; it is not the default. It tests symmetry about 
 ### 1. Normalized Patching Effect ($P$)
 How much does patching a clean activation recover the clean metric?
 
-$$ P = \frac{M_{\text{patched}} - M_{\text{corrupted}}}{M_{\text{clean}} - M_{\text{corrupted}}} $$
+$$
+\large\displaystyle P = \frac{M_{\text{patched}} - M_{\text{corrupted}}}{M_{\text{clean}} - M_{\text{corrupted}}}
+$$
 
 ### 2. Inference: choose a null before interpreting results
 
@@ -111,7 +116,9 @@ These are activation-patching locations, not claims that all architectures imple
 
 FDR describes the long-run expected share of false results among those called significant:
 
-$$ \mathrm{FDR} = \mathbb{E}\left[\frac{V}{\max(R, 1)}\right] \leq \alpha $$
+$$
+\large\displaystyle \mathrm{FDR} = \mathbb{E}\left[\frac{V}{\max(R, 1)}\right] \leq \alpha
+$$
 
 `R` is the number called significant; `V` is the false ones among them. It is not a guarantee about the false-result share in one run.
 
@@ -125,9 +132,17 @@ Neither correction can make invalid p-values or a poorly chosen null trustworthy
 ### 3. Circuit Localization Index ($\text{CLI}$)
 Describes how concentrated the absolute point estimates are. It is descriptive, not a significance test or evidence that a circuit is causal. A score near $1.0$ means concentrated effects; a score near $0.0$ means diffuse effects.
 
-$$ p_i = \frac{|P_i|}{\sum_j |P_j| + \epsilon} $$
-$$ H_{\text{causal}} = - \sum p_i \log_2 (p_i + \epsilon) $$
-$$ \text{CLI} = 1 - \frac{H_{\text{causal}}}{\log_2(N)} $$
+$$
+\large\displaystyle p_i = \frac{|P_i|}{\sum_j |P_j| + \epsilon}
+$$
+
+$$
+\large\displaystyle H_{\text{causal}} = - \sum_i p_i \log_2 (p_i + \epsilon)
+$$
+
+$$
+\large\displaystyle \text{CLI} = 1 - \frac{H_{\text{causal}}}{\log_2(N)}
+$$
 
 ---
 
@@ -262,12 +277,6 @@ Reference: Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Disco
 
 ---
 
-## Validation results
-
-The detailed calibration and implementation results are in [VALIDATION.md](VALIDATION.md).
-
----
-
 ## 💻 Quick Start
 ### Option 1. Install from PyPI:
 
@@ -294,15 +303,13 @@ pip install -e .[test]
 python example_usage.py
 python advanced_tutorial.py
 
-# Reproduce the published BH reference benchmark
-python -m pytest -q tests/test_published_benchmark.py
 ```
 
 ---
 
 ## ⚠️ Limitations
 
-The published benchmark checks the multiple-testing adjustment on one reference example. The synthetic and bridge tests provide additional software evidence described above, but do not validate p-values for a particular research dataset, establish that a chosen empirical null fits a particular model or dataset, or guarantee calibrated results for every TransformerLens model. Inference still depends on valid input p-values and the assumptions of the selected null and correction method. The localization index and exploratory outlier scores are descriptive; they are not significance tests or evidence of causality.
+The published benchmark checks the multiple-testing adjustment on one reference example. Other synthetic and bridge tests provide software evidence, but do not validate p-values for a particular research dataset, establish that a chosen empirical null fits a particular model or dataset, or guarantee calibrated results for every TransformerLens model. Inference still depends on valid input p-values and the assumptions of the selected null and correction method. The localization index and exploratory outlier scores are descriptive; they are not significance tests or evidence of causality.
 
 The exported `calculate_p_values` helper is a separate normal-null option: it assumes a representative control sample and an approximately normal null. `compute_control_baseline` only returns control moments; it does not validate normality. `compute_robust_baseline` is used for descriptive outlier scores and is not a Gaussian inference method.
 
