@@ -284,13 +284,13 @@ pip install transformerlens-fdr
 ### Option 2: Install Directly from GitHub
 Anyone can install this directly into their environment without needing to clone the repo:
 ```bash
-pip install git+https://github.com/anaykatiyar-lang/transformerlens-fdr.git
+pip install git+https://github.com/anaykatiyar-lang/transformerlens_fdr.git
 ```
 
 ### Option 3: Clone for Local Development
 If you want to edit the code or run the tutorials:
 ```bash
-git clone https://github.com/anaykatiyar-lang/transformerlens-fdr.git
+git clone https://github.com/anaykatiyar-lang/transformerlens_fdr.git
 cd transformerlens-fdr
 
 # Install editable with tests
