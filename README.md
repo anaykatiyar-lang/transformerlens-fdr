@@ -13,7 +13,7 @@ The package computes per-prompt patching effects and descriptive robust outlier 
 
 ## 🚀 Why Use FDR?
 
-Standard activation patching measures a normalized effect. I do not treat a fixed effect-size cutoff as proof that a component belongs to a circuit. When many components are tested, false discoveries need to be considered explicitly.
+This audit patches clean activations into a corrupted run. It asks whether those clean activations are sufficient to recover the chosen metric in that context; it does not test whether a component is necessary. Noising or ablating a component asks a different question. I do not treat a fixed effect-size cutoff as proof that a component belongs to a circuit. When many components are tested, false discoveries need to be considered explicitly.
 
 The default audit does not invent a null from the observed components. It reports exploratory outlier scores and leaves p-values, q-values, and the significance mask unset. For inference, use a per-component empirical null or request sign-flip testing over independent prompt pairs.
 
@@ -22,11 +22,11 @@ The default audit does not invent a null from the observed components. It report
 | Your setup | Choose | What the result means |
 | --- | --- | --- |
 | You are exploring, or cannot defend a no-effect comparison | Default `method="none"` | Descriptive effects and outlier scores only; no p-values or FDR claim |
-| Prompt effects are independent or exchangeable and symmetric around zero when there is no effect | `method="signflip"` | FDR-adjusted results under those sign-flip assumptions; the package cannot verify them |
+| Prompt effects are independent, and each is symmetric about zero under its null | `method="signflip"` | FDR-adjusted results under those sign-flip assumptions; the package cannot verify them |
 | You have task-specific control runs that preserve the task structure while removing the relation of interest | `null_distribution=...` | Results relative to those controls, if the controls are a valid null for the stated metric and component family |
 | Effects are clustered or skewed, and neither sign-flip assumptions nor a defensible control design fit | Do not treat the output as calibrated inference | Use descriptive mode or design a task-appropriate null and validate it separately |
 
-Sign-flip is an explicit opt-in; it is not the default. No path can turn an unsuitable null into valid p-values.
+Sign-flip is an explicit opt-in; it is not the default. It tests symmetry about zero, not merely a zero mean: a skewed, mean-zero null can still produce invalid p-values. The code applies shared random sign patterns across components to preserve their dependence in each permutation; this does not remove the need for independent prompt effects and valid marginal symmetry. No path can turn an unsuitable null into valid p-values.
 
 ---
 
@@ -44,11 +44,11 @@ $$ P = \frac{M_{\text{patched}} - M_{\text{corrupted}}}{M_{\text{clean}} - M_{\t
 <details>
 <summary>Option 1 · Sign-flip test for matched prompts</summary>
 
-Use `method="signflip"` when per-prompt effects are independent (or exchangeable) and the no-effect distribution is symmetric around zero. Repeated or closely related prompts can break independence; skew can break symmetry. The package cannot check these assumptions for you.
+Use `method="signflip"` when prompt-level effects are independent and each effect is symmetric about zero under its null. Exchangeability alone is not enough: sign-flip validity comes from sign symmetry, not from permutation exchangeability. Repeated or closely related prompts can break independence; a skewed distribution with mean zero can break symmetry. The test checks symmetry about zero, not just whether the mean is zero. The package cannot check these assumptions for you.
 
 The smallest possible p-value is `1 / (n_perm + 1)`. Set `n_perm` when creating `PatchingAuditor`. For example, with 144 tests and target level 0.05, 3,000 permutations resolve the first Benjamini–Hochberg threshold. Benjamini–Yekutieli needs finer p-value resolution, so it requires more permutations.
 
-For sign-flip inference, effects whose absolute normalized value is at most `zero_effect_tolerance` (default `1e-8`) are treated as zero. This is a numerical-zero safeguard, not a practical-effect test. The result records exact and numerical zero-component counts.
+The sign-flip test is two-sided by default. A significant negative effect means patching the clean activation lowered the supplied metric relative to the corrupted run; interpret that direction according to how your metric is defined. Effects whose absolute normalized value is at most `zero_effect_tolerance` (default `1e-8`) are treated as zero. This is a numerical-zero safeguard, not a practical-effect test. The result records exact and numerical zero-component counts.
 
 </details>
 
@@ -96,6 +96,16 @@ family_size = adjust_audits_together(
 
 This updates the q-values and significance masks on both results. Separate calls only control FDR within each call.
 
+### What a hook represents
+
+| `hook_type` | What is patched | How to read it |
+| --- | --- | --- |
+| `attn_head` (default) | One attention head's `attn.hook_z` output at a time | Head-specific sufficiency effects. |
+| `mlp_out` | The whole MLP output at each layer | A layer-level effect, not an individual-neuron score. Architectures with a post-MLP normalization or other intervening operation may interpret this hook differently; inspect the model's hook placement and validate it for your architecture. |
+| `resid_mid` | The residual stream at each token position and layer | A whole-stream intervention, not a component-specific attribution. Since it restores a broad activation, effects near 1 across layers can be expected and do not identify individual heads or neurons. |
+
+These are activation-patching locations, not claims that all architectures implement the same computation at each location. The tests exercise native TransformerLens 4 bridges and a cached GPT-2 integration path; that is not validation of every supported architecture or of every hook's scientific interpretation.
+
 <details>
 <summary>After valid p-values · Choose an FDR correction</summary>
 
@@ -128,7 +138,7 @@ The API is intentionally simple. You will mostly interact with `PatchingAuditor`
 ### `PatchingAuditor` (Class)
 The main controller for your statistical audit.
 - **`__init__(model, metric_fn, fdr_threshold=0.05, fdr_method='fdr_bh', n_perm=9999, hook_type='attn_head', zero_effect_tolerance=1e-8)`**
-  `metric_fn` must return one metric value per prompt (`[B]`). BH requires valid p-values and independence or positive regression dependence; BY handles arbitrary dependence but still requires valid p-values.
+  `metric_fn` must return one metric value per prompt (`[B]`). The default is BH: it requires valid p-values and independence or positive regression dependence among tests. BY handles arbitrary dependence among valid p-values but is more conservative. The simulations in this repository cover specific dependence settings; they do not establish BH's assumptions for every model or task. Choose BY when you cannot defend BH's dependence condition.
 - **`run_patching_audit(...)`**  
   Patches all components. Pass `method="signflip"` to use the symmetry-about-zero sign-flip test, or provide a per-component `null_distribution`. With neither, results are exploratory and inferential fields are `None`.
 - **`check_setup(...)`**
@@ -182,6 +192,40 @@ print(heldout.evaluation_audit.cli_score)  # descriptive only
 The helper checks that the group IDs do not overlap. It cannot establish that
 the groups are independent or that the selected mask is causal.
 
+### End-to-end quick example (TransformerLens 4)
+
+This short example uses two matched prompt pairs only to show the API; real inference needs enough independent prompt pairs for the task and testing family. Supply aligned clean/corrupted prompts, target token IDs, and a metric that returns one value per prompt.
+
+```python
+import torch
+from transformer_lens import TransformerBridge
+from transformerlens_fdr import PatchingAuditor, logit_difference
+
+model = TransformerBridge.boot_transformers("gpt2")
+model.enable_compatibility_mode()  # HookedTransformer-equivalent numerics
+clean = model.to_tokens([
+    "When John and Mary went to the store, John gave a drink to",
+    "When Tom and Alice went to the store, Tom gave a drink to",
+])
+corrupt = model.to_tokens([
+    "When John and Mary went to the store, Mary gave a drink to",
+    "When Tom and Alice went to the store, Alice gave a drink to",
+])
+correct = torch.tensor([model.to_single_token(" Mary"), model.to_single_token(" Alice")], device=model.cfg.device)
+incorrect = torch.tensor([model.to_single_token(" John"), model.to_single_token(" Tom")], device=model.cfg.device)
+
+auditor = PatchingAuditor(model, metric_fn=logit_difference, fdr_method="fdr_by")
+result = auditor.run_patching_audit(
+    clean, corrupt, correct, incorrect, method="signflip"
+)
+print(result.format_summary())
+print(result.summary_df.sort_values("q_value").head())
+```
+
+`TransformerBridge` defaults to raw Hugging Face numerics; `enable_compatibility_mode()` requests HookedTransformer-equivalent numerics. Keep the mode fixed when comparing results and report it. The repository's GPT-2 example and small-model auditor tests use compatibility mode; optional real-model integration tests exercise the bridge separately. Compatibility mode changes the numerical convention, so it can change measured effects.
+
+For reproducibility, record the exact prompt pairs and model ID/revision, hook type, metric, correction family and method, `n_perm`, compatibility mode, and the package/TransformerLens versions. `AuditResults` records the correction and resolution details, but does **not** store the RNG seed, exact `n_perm`, model revision, or package versions. The auditor currently uses PyTorch's global random generator for sign flips; set and record `torch.manual_seed(...)` before the audit if you need a repeatable permutation stream.
+
 ### Metrics & Stats (Functions)
 - **`logit_difference(logits, correct_tokens, incorrect_tokens)`**  
   Returns the correct-minus-incorrect logit difference for each prompt.
@@ -215,6 +259,18 @@ python -m pytest -q tests/test_published_benchmark.py
 ```
 
 Reference: Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing,” *Journal of the Royal Statistical Society: Series B*, 57(1), 289–300. [DOI: 10.1111/j.2517-6161.1995.tb02031.x](https://doi.org/10.1111/j.2517-6161.1995.tb02031.x). The paper's p-values and result are also available in its [full text](https://www.stat.cmu.edu/~ryantibs/journalclub/benjamini_1995.pdf).
+
+---
+
+## 🧪 Validation in this repository
+
+The published benchmark above validates the BH adjustment against the paper's 15-hypothesis example. Separate software tests exercise other parts of the implementation; these are implementation checks, not published empirical validation of TransformerLens research results:
+
+- `tests/test_stress.py` checks sign-flip results against exact enumeration on small cases, tests simulated p-value behavior under symmetric nulls, and includes toy-model cases with known effects.
+- `tests/test_calibration.py` checks null calibration and realized FDR in repeated simulations with normal, heavy-tailed, symmetric-mixture, and positively correlated effects. Its mean-zero, nonsymmetric cases are diagnostics, not passing calibration claims. Run the full 1,000-replication report with `python -m tests.test_calibration`.
+- `tests/test_bridge_native.py` checks audit shapes and finite outputs on a small native TransformerLens 4 bridge. `tests/test_bridge_integration.py` optionally checks a cached Hugging Face model (GPT-2 by default) when explicitly enabled.
+
+The simulated BH checks cover the dependence structures generated in those tests. They do not prove BH is valid for arbitrary dependencies among head-level hypotheses. Sign-flip calibration is not established for skewed effects. Prompt-level sign flips treat prompts as independent units: repeated templates, multiple variants of one underlying example, or other clusters can make that unit inappropriate. Keep related templates together in the held-out helper, and do not describe prompt-level sign-flip results as calibrated when prompts are dependent. A held-out split helps assess selection on separate prompts; it does not repair a misspecified null.
 
 ---
 
@@ -252,8 +308,8 @@ python -m pytest -q tests/test_published_benchmark.py
 
 ## ⚠️ Limitations
 
-This published benchmark checks the multiple-testing adjustment on one reference example. It does not validate the p-values supplied to that adjustment, establish that a chosen empirical null fits a particular model or dataset, or guarantee calibrated results for every TransformerLens model. Inference still depends on valid input p-values and the assumptions of the selected null and correction method. The localization index and exploratory outlier scores are descriptive; they are not significance tests or evidence of causality.
+The published benchmark checks the multiple-testing adjustment on one reference example. The synthetic and bridge tests provide additional software evidence described above, but do not validate p-values for a particular research dataset, establish that a chosen empirical null fits a particular model or dataset, or guarantee calibrated results for every TransformerLens model. Inference still depends on valid input p-values and the assumptions of the selected null and correction method. The localization index and exploratory outlier scores are descriptive; they are not significance tests or evidence of causality.
 
 The exported `calculate_p_values` helper is a separate normal-null option: it assumes a representative control sample and an approximately normal null. `compute_control_baseline` only returns control moments; it does not validate normality. `compute_robust_baseline` is used for descriptive outlier scores and is not a Gaussian inference method.
 
-The numerical-zero tolerance does not decide whether a statistically detectable effect is large enough to matter. A separate minimum-effect analysis needs its own explicit hypothesis and validation; it is not part of the current FDR test.
+The numerical-zero tolerance does not decide whether a statistically detectable effect is large enough to matter. A separate minimum-effect analysis needs its own explicit hypothesis and validation; it is not part of the current FDR test. The empirical-null snippet above is a design illustration, not a runnable control-generation recipe: a defensible control depends on the research question and must be implemented and validated by the researcher.
