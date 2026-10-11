@@ -3,6 +3,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![TransformerLens v4.0.0+](https://img.shields.io/badge/transformer__lens-4.0.0+-orange.svg)](https://github.com/TransformerLensOrg/TransformerLens)
 [![PyPI version](https://img.shields.io/pypi/v/transformerlens-fdr)](https://pypi.org/project/transformerlens-fdr/)
+[![Website](https://img.shields.io/badge/site-live-73e3e5)](https://anaykatiyar-lang.github.io/transformerlens_fdr/)
 
 **Activation-patching analysis utilities for TransformerLens.** I built this package to make component patching effects easier to inspect and to provide an explicit, assumption-aware path from those effects to multiple-testing results.
 
@@ -10,8 +11,6 @@ The package computes per-prompt patching effects and descriptive robust outlier 
 
 ## 🚀 Why Use FDR?
 
-<details>
-<summary>Why should I use FDR?</summary>
 
 This audit patches clean activations into a corrupted run. It asks whether those clean activations are sufficient to recover the chosen metric in that context; it does not test whether a component is necessary. Noising or ablating a component asks a different question. I do not treat a fixed effect-size cutoff as proof that a component belongs to a circuit. When many components are tested, false discoveries need to be considered explicitly.
 
