@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TransformerLens-FDR: assumption-aware statistical auditing for activation patching and mechanistic interpretability.">
+  <meta property="og:title" content="TransformerLens-FDR — Statistical audits for mechanistic interpretability">
+  <meta property="og:description" content="Move from patching effects to defensible multiple-testing results with explicit null assumptions.">
+  <meta property="og:type" content="website">
+  <meta name="theme-color" content="#0b1120">
+  <title>TransformerLens-FDR — Statistical audits for mechanistic interpretability</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <style>
+:root{--ink:#0b1120;--ink-2:#111a2b;--ink-3:#18243a;--paper:#f4f3ee;--muted:#9ba7b9;--text:#eaf0f6;--line:rgba(255,255,255,.13);--cyan:#73e3e5;--orange:#ff9d6a;--lime:#c4ee8b;--violet:#b9a7ff;--sans:'DM Sans',system-ui,sans-serif;--display:'Space Grotesk',var(--sans);--mono:'DM Mono',monospace;--max:1180px}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--ink);color:var(--text);font-family:var(--sans);line-height:1.55;overflow-x:hidden}a{color:inherit;text-decoration:none}button{font:inherit;color:inherit}::selection{background:var(--cyan);color:var(--ink)}.scroll-progress{height:3px;width:0;background:linear-gradient(90deg,var(--cyan),var(--orange));position:fixed;top:0;left:0;z-index:20}.section-shell{max-width:var(--max);margin:auto;padding-left:34px;padding-right:34px}.site-header{height:82px;display:flex;align-items:center;justify-content:space-between;max-width:var(--max);margin:auto;padding:0 34px;border-bottom:1px solid var(--line)}.brand{font-family:var(--display);font-size:17px;font-weight:700;display:flex;align-items:center;gap:10px;letter-spacing:-.04em}.brand-accent{color:var(--cyan)}.brand-mark{width:23px;height:23px;display:flex;align-items:flex-end;gap:3px}.brand-mark span{display:block;width:5px;border-radius:1px;background:var(--cyan)}.brand-mark span:nth-child(1){height:11px;opacity:.55}.brand-mark span:nth-child(2){height:18px}.brand-mark span:nth-child(3){height:14px;background:var(--orange)}.primary-nav{display:flex;align-items:center;gap:25px;font-size:12px;color:var(--muted)}.primary-nav a:not(.nav-cta){transition:color .2s}.primary-nav a:not(.nav-cta):hover,.text-link:hover,.source-note a:hover{color:var(--cyan)}.nav-cta{border:1px solid var(--line);padding:10px 14px;border-radius:999px;color:var(--text);transition:border .2s,background .2s}.nav-cta:hover{border-color:var(--cyan);background:rgba(115,227,229,.08)}.nav-toggle{display:none;background:none;border:0;padding:8px}.nav-toggle span{display:block;width:22px;height:2px;background:var(--text);margin:4px}
+.hero{min-height:630px;display:grid;grid-template-columns:1.02fr .98fr;align-items:center;gap:40px;padding-top:58px;padding-bottom:65px}.eyebrow{font:500 11px var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--cyan);margin:0 0 22px}.eyebrow-dot{width:7px;height:7px;background:var(--orange);display:inline-block;border-radius:50%;margin-right:8px;box-shadow:0 0 15px var(--orange)}h1,h2,h3,p{margin-top:0}h1,h2{font-family:var(--display);letter-spacing:-.07em;line-height:1.03}h1{font-size:clamp(47px,6.2vw,82px);margin:0 0 25px}h1 em,h2 em{font-style:normal;color:var(--cyan)}.hero-lede{font-size:17px;color:#b6c0cf;max-width:560px;line-height:1.7;margin-bottom:30px}.hero-actions{display:flex;flex-wrap:wrap;gap:11px}.button{border:1px solid transparent;border-radius:4px;padding:13px 17px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:12px;transition:transform .2s,background .2s,border .2s}.button:hover{transform:translateY(-2px)}.button-primary{background:var(--cyan);color:var(--ink)}.button-primary:hover{background:#9bf1ef}.button-ghost{border-color:var(--line);background:transparent;color:var(--text)}.button-ghost:hover{border-color:var(--cyan);background:rgba(115,227,229,.08)}.hero-meta{display:flex;gap:20px;margin-top:30px;color:#728197;font:11px var(--mono);flex-wrap:wrap}.hero-meta b{color:#d3dce5;font-weight:500}.hero-visual{height:500px;position:relative;overflow:hidden;border:1px solid var(--line);background:radial-gradient(circle at 50% 50%,rgba(115,227,229,.08),transparent 34%),linear-gradient(135deg,rgba(255,255,255,.035),transparent);border-radius:3px}.hero-visual:before{content:'';position:absolute;inset:0;opacity:.32;background-image:linear-gradient(rgba(255,255,255,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.06) 1px,transparent 1px);background-size:40px 40px;mask-image:linear-gradient(90deg,transparent,black 18%,black 82%,transparent)}.visual-glow{position:absolute;width:190px;height:190px;border-radius:50%;top:150px;left:calc(50% - 95px);background:var(--cyan);opacity:.08;filter:blur(32px)}.audit-orbit{position:absolute;left:50%;top:50%;border:1px solid rgba(115,227,229,.29);border-radius:50%;transform:translate(-50%,-50%) rotate(-23deg)}.orbit-one{width:340px;height:150px}.orbit-two{width:250px;height:390px;transform:translate(-50%,-50%) rotate(47deg);border-color:rgba(255,157,106,.28)}.audit-core{position:absolute;left:50%;top:50%;width:132px;height:132px;transform:translate(-50%,-50%);border-radius:50%;background:var(--ink-2);border:1px solid var(--cyan);box-shadow:0 0 35px rgba(115,227,229,.15);display:flex;flex-direction:column;align-items:center;justify-content:center}.audit-core .core-label{font:10px var(--mono);color:var(--cyan);letter-spacing:.15em}.audit-core strong{font:700 31px var(--display);line-height:1;color:var(--text);margin:4px 0}.audit-core small{font:9px var(--mono);color:#8090a5}.node{position:absolute;padding:8px 10px;background:rgba(17,26,43,.92);border:1px solid var(--line);font:10px var(--mono);display:flex;gap:11px;box-shadow:0 9px 26px rgba(0,0,0,.25)}.node span{color:#91a0b3}.node b{color:var(--cyan);font-weight:500}.node-a{left:13%;top:25%}.node-b{right:12%;top:29%}.node-c{left:12%;bottom:24%}.node-d{right:13%;bottom:27%}.node-b b,.node-d b{color:var(--orange)}.visual-caption{position:absolute;bottom:24px;left:27px;right:27px;display:flex;align-items:center;gap:12px;font:10px var(--mono);text-transform:uppercase;letter-spacing:.13em;color:#7f91a6}.caption-line{height:1px;background:linear-gradient(90deg,var(--cyan),transparent);width:37px}
+.section-block{padding-top:118px;padding-bottom:118px}.section-heading{max-width:670px;margin-bottom:48px}.section-heading h2{font-size:clamp(37px,4.7vw,62px);margin-bottom:22px}.section-heading>p:last-child{color:#aab5c4;max-width:610px}.section-heading.centered{text-align:center;margin-left:auto;margin-right:auto;max-width:710px}.section-heading.centered>p:last-child{margin-left:auto;margin-right:auto}.why-grid{display:grid;grid-template-columns:1fr 1fr;gap:110px;align-items:center;border-top:1px solid var(--line);padding-top:36px}.why-copy{color:#aab5c4;max-width:485px}.why-copy p{font-size:16px;line-height:1.72}.why-copy strong{color:var(--text);font-weight:500}.text-link{font:11px var(--mono);color:var(--cyan);display:inline-flex;gap:12px;margin-top:11px}.stat-card{border:1px solid rgba(115,227,229,.35);min-height:280px;display:flex;flex-direction:column;justify-content:center;align-items:center;background:linear-gradient(140deg,rgba(115,227,229,.08),rgba(115,227,229,.015));position:relative}.stat-card:after{content:'NORMALIZED EFFECT';position:absolute;top:19px;right:21px;font:9px var(--mono);letter-spacing:.14em;color:#668496}.stat-number{font:700 69px var(--display);color:var(--cyan);line-height:1}.stat-equation{font:17px var(--mono);line-height:1.55;text-align:center;color:var(--text);margin:13px 0 16px}.stat-equation sub{font-size:10px;color:var(--orange)}.stat-equation span{color:var(--orange)}.stat-caption{font-size:12px;color:#8e9eaf;max-width:355px;text-align:center;margin:0}
+.paths-section{background:var(--paper);color:var(--ink);max-width:none;padding-left:max(34px,calc((100vw - var(--max))/2 + 34px));padding-right:max(34px,calc((100vw - var(--max))/2 + 34px));margin:0}.paths-section .eyebrow{color:#56777c}.paths-section .section-heading>p:last-child{color:#5f6c79}.path-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;max-width:1112px}.path-card{min-height:310px;padding:23px;border:1px solid rgba(11,17,32,.16);display:flex;flex-direction:column;background:#fafaf7;position:relative;overflow:hidden}.path-card:before{content:'';position:absolute;inset:auto 0 0;height:4px}.path-explore:before{background:#9ca8b5}.path-signflip:before{background:#57bcc3}.path-null:before{background:var(--orange)}.path-top{display:flex;justify-content:space-between;align-items:center}.path-index{font:12px var(--mono);color:#74818f}.pill{font:10px var(--mono);text-transform:uppercase;letter-spacing:.08em;border:1px solid;padding:5px 7px}.pill-muted{color:#687583;border-color:#cbd1d5}.pill-cyan{color:#29878b;border-color:#9bdadd}.pill-orange{color:#b55e32;border-color:#f2b89c}.path-card h3{font:600 30px var(--display);letter-spacing:-.06em;margin:37px 0 4px}.path-code{font:11px var(--mono);color:#65727e;margin-bottom:17px}.path-card>p:not(.path-code){font-size:13px;color:#65717e;max-width:290px}.path-result{margin-top:auto;display:flex;align-items:flex-start;gap:10px;padding-top:18px;border-top:1px solid #dfe1df;font:11px var(--mono);color:#5c6b78}.result-dot{width:8px;height:8px;border-radius:50%;flex:none;margin-top:3px;background:#9ca8b5}.result-dot.cyan{background:#57bcc3;box-shadow:0 0 12px rgba(87,188,195,.65)}.result-dot.orange{background:var(--orange);box-shadow:0 0 12px rgba(255,157,106,.55)}.callout{max-width:1112px;border:1px solid #ced5d5;margin-top:17px;padding:14px 17px;display:flex;gap:12px;align-items:center;color:#66727e;font-size:12px}.callout-icon{width:19px;height:19px;border:1px solid #c88162;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#b55e32;font:bold 12px var(--mono);flex:none}.callout p{margin:0}.callout strong{color:var(--ink);font-weight:600}
+.workflow-layout{display:grid;grid-template-columns:.93fr 1.07fr;gap:80px;align-items:center}.workflow-steps{border-left:1px solid var(--line);padding-left:24px}.workflow-step{display:grid;grid-template-columns:44px 1fr;gap:14px;padding:1px 0 33px;position:relative}.workflow-step:last-child{padding-bottom:1px}.workflow-step:before{content:'';position:absolute;left:-28px;top:8px;width:7px;height:7px;border-radius:50%;background:var(--ink-3);border:1px solid #5e6d80}.workflow-step.active:before{background:var(--cyan);border-color:var(--cyan);box-shadow:0 0 14px var(--cyan)}.step-num{font:11px var(--mono);color:var(--orange);padding-top:4px}.workflow-step h3{font:600 19px var(--display);letter-spacing:-.04em;margin-bottom:6px}.workflow-step p{color:#98a6b7;font-size:13px;line-height:1.65;margin:0}.workflow-panel{border:1px solid var(--line);background:linear-gradient(140deg,rgba(255,255,255,.05),rgba(255,255,255,.015));padding:27px 25px;min-height:330px}.panel-label{font:10px var(--mono);letter-spacing:.16em;color:#77899e}.mini-table{margin-top:27px;font:11px var(--mono)}.mini-row{display:grid;grid-template-columns:1fr 55px 55px;gap:9px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line);color:#a4b0c0}.mini-head{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6f8198;padding-top:0}.mini-row b{font-weight:500;color:var(--text)}.mini-row span:last-child{text-align:right}.tiny-bar{height:4px;width:22px;display:inline-block;margin-right:8px;background:var(--cyan);vertical-align:middle}.bar-mid{background:var(--orange);width:15px}.bar-low{background:#566579;width:7px}.q-pass{color:var(--lime)}.q-fail{color:#77879a}.cli-block{margin-top:27px}.cli-block>div:first-child{display:flex;justify-content:space-between;align-items:end}.cli-block strong{font:600 29px var(--display);color:var(--cyan)}.cli-track{height:6px;background:#27364b;margin:10px 0 8px}.cli-track span{display:block;height:100%;width:78%;background:linear-gradient(90deg,var(--cyan),var(--lime))}.cli-block p{font-size:10px;color:#7d8c9e;margin:0;max-width:450px}
+.api-section{background:#0d1728}.code-layout{display:grid;grid-template-columns:1.18fr .82fr;gap:26px;align-items:stretch}.code-window{border:1px solid var(--line);background:#09111e;min-width:0}.window-bar{height:43px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:6px}.window-bar>span{width:7px;height:7px;background:#364357;border-radius:50%}.window-bar>span:nth-child(2){background:#685b4b}.window-bar>span:nth-child(3){background:#456663}.window-bar small{font:10px var(--mono);color:#75859a;margin-left:9px}.code-copy{margin-left:auto;background:none;border:0;color:var(--cyan);font:10px var(--mono);cursor:pointer}.code-window pre{overflow:auto;margin:0;padding:25px;font:12px/1.9 var(--mono);color:#d7e2ed}.tok-purple{color:var(--violet)}.tok-blue{color:#74d9ff}.tok-orange{color:var(--orange)}.tok-green{color:var(--lime)}.tok-comment{color:#63758a}.api-list{display:flex;flex-direction:column;gap:20px;padding:3px 0}.api-item{display:flex;gap:15px;border-bottom:1px solid var(--line);padding-bottom:19px}.api-icon{font:23px var(--mono);color:var(--cyan);line-height:1}.api-item h3{font:600 17px var(--display);letter-spacing:-.04em;margin:0 0 3px}.api-item p{font-size:12px;line-height:1.6;color:#91a0b3;margin:0}.api-item code,.install-note code{font:11px var(--mono);color:var(--cyan)}.button-dark{margin-top:auto;border-color:var(--line);justify-content:center}.button-dark:hover{border-color:var(--cyan)}
+.install-band{display:grid;grid-template-columns:1fr auto;gap:25px 70px;align-items:center;padding-top:62px;padding-bottom:62px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.install-band h2{font-size:38px;margin:0}.install-box{display:flex;align-items:center;border:1px solid var(--line);background:#09111e;padding:5px 7px 5px 16px;min-width:335px}.install-box code{font:12px var(--mono);color:var(--lime);flex:1}.install-box .copy-button{background:none;border:0;color:var(--cyan);padding:7px;cursor:pointer}.install-note{grid-column:2;margin:-12px 0 0;color:#748399;font:10px var(--mono)}.install-note a{color:var(--cyan)}.copy-toast{position:absolute;opacity:0;pointer-events:none;background:var(--lime);color:var(--ink);font:10px var(--mono);padding:3px 6px;transform:translateY(-25px);transition:opacity .2s}.copy-toast.show{opacity:1}
+.reading-section{padding-bottom:90px}.reading-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.reading-card{border:1px solid var(--line);min-height:210px;padding:19px;position:relative;transition:transform .2s,border .2s,background .2s}.reading-card:hover{transform:translateY(-4px);border-color:var(--cyan);background:rgba(115,227,229,.04)}.reading-tag{font:9px var(--mono);color:var(--orange);text-transform:uppercase;letter-spacing:.1em}.reading-card h3{font:600 19px var(--display);line-height:1.15;letter-spacing:-.04em;margin:44px 0 10px}.reading-card p{font:11px var(--mono);color:#7f91a6}.card-arrow{position:absolute;right:16px;bottom:16px;color:var(--cyan);font-size:16px}.source-note{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--line);margin-top:38px;padding-top:17px;font:10px var(--mono);color:#7f91a6}.source-note a{color:var(--cyan)}.final-cta{text-align:center;border-top:1px solid var(--line);padding-top:108px;padding-bottom:110px;position:relative}.final-mark{font:11px var(--mono);color:var(--orange);letter-spacing:.2em;margin-bottom:24px}.final-mark span{color:var(--cyan);margin-left:8px}.final-cta h2{font-size:clamp(42px,5.5vw,68px);margin:0 auto 20px}.final-cta p{color:#96a5b6;max-width:480px;margin:0 auto 28px}.hero-actions{justify-content:center}.site-footer{border-top:1px solid var(--line);padding-top:20px;padding-bottom:27px;display:flex;justify-content:space-between;color:#65758b;font:10px var(--mono)}.site-footer a{color:var(--cyan)}.reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s ease}.reveal.visible{opacity:1;transform:none}
+@media(max-width:900px){.site-header{padding:0 22px}.section-shell{padding-left:22px;padding-right:22px}.hero{grid-template-columns:1fr;min-height:0;padding-top:75px}.hero-visual{height:390px}.why-grid{gap:45px}.workflow-layout{gap:35px}.paths-section{padding-left:22px;padding-right:22px}.reading-grid{grid-template-columns:repeat(2,1fr)}.install-band{grid-template-columns:1fr}.install-note{grid-column:1;margin:0}.install-box{max-width:410px}.primary-nav{gap:16px}}
+@media(max-width:680px){.site-header{height:70px}.nav-toggle{display:block}.primary-nav{position:absolute;top:70px;left:0;right:0;background:var(--ink-2);border-bottom:1px solid var(--line);padding:20px 22px;display:none;flex-direction:column;align-items:flex-start;z-index:10}.primary-nav.open{display:flex}.nav-cta{width:100%;text-align:center}.hero{padding-top:60px;padding-bottom:42px}.hero-lede{font-size:15px}.hero-visual{height:350px}.node{font-size:9px}.node-a{left:4%;top:22%}.node-b{right:4%;top:25%}.node-c{left:4%;bottom:19%}.node-d{right:4%;bottom:23%}.section-block{padding-top:78px;padding-bottom:78px}.why-grid,.path-grid,.workflow-layout,.code-layout{grid-template-columns:1fr}.stat-card{min-height:235px}.path-card{min-height:290px}.workflow-panel{margin-top:8px}.install-band{padding-top:48px;padding-bottom:48px}.install-box{min-width:0;width:100%}.reading-grid{grid-template-columns:1fr 1fr}.reading-card{min-height:190px;padding:15px}.reading-card h3{font-size:17px;margin-top:36px}.source-note{display:block;line-height:2}.source-note a{display:block}.site-footer{display:block;line-height:2.1}.site-footer span{display:block}.site-footer a{display:block}.code-window pre{padding:18px;font-size:10px}.api-list{margin-top:8px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.reveal{transition:none}.button,.reading-card{transition:none}}
+:focus-visible{outline:2px solid var(--orange);outline-offset:3px}
+
+/* Additive interaction layer. styles.css is untouched. */
+html{-webkit-tap-highlight-color:transparent}
+body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(540px circle at var(--mx,72%) var(--my,18%),rgba(115,227,229,.11),transparent 62%)}
+
+/* spotlight overlay injected by script.js into cards */
+.fx{position:relative}
+.fx-spot{position:absolute;inset:0;pointer-events:none;opacity:0;transition:opacity .3s;z-index:1;
+  background:radial-gradient(240px circle at var(--cx,50%) var(--cy,50%),rgba(115,227,229,.17),transparent 66%)}
+.fx:hover>.fx-spot,.fx.touch-on>.fx-spot{opacity:1}
+.paths-section .fx-spot{background:radial-gradient(240px circle at var(--cx,50%) var(--cy,50%),rgba(87,188,195,.2),transparent 66%)}
+.fx:hover,.fx.touch-on{box-shadow:0 0 34px rgba(115,227,229,.10)}
+.path-card.fx:hover,.path-card.fx.touch-on{box-shadow:0 12px 34px rgba(11,17,32,.12)}
+.path-card,.workflow-panel,.stat-card,.code-window,.api-item{transition:transform .2s,box-shadow .3s,border-color .3s}
+.path-card:hover,.path-card.touch-on{transform:translateY(-4px)}
+.stat-card:hover,.workflow-panel:hover,.code-window:hover{border-color:rgba(115,227,229,.45)}
+.fx:active{transform:scale(.99)}
+
+/* hero: nodes follow the pointer slightly, orbits turn slowly */
+.node{cursor:pointer;transform:translate(calc(var(--px,0)*9px),calc(var(--py,0)*9px));transition:transform .25s ease-out,border-color .25s,box-shadow .25s}
+.node:hover,.node.hot{border-color:var(--cyan);box-shadow:0 0 22px rgba(115,227,229,.35)}
+.node-b:hover,.node-d:hover,.node-b.hot,.node-d.hot{border-color:var(--orange);box-shadow:0 0 22px rgba(255,157,106,.35)}
+.audit-core{animation:corePulse 4.5s ease-in-out infinite}
+@keyframes corePulse{50%{box-shadow:0 0 52px rgba(115,227,229,.32)}}
+.orbit-one{animation:spinA 46s linear infinite}
+.orbit-two{animation:spinB 62s linear infinite}
+@keyframes spinA{to{transform:translate(-50%,-50%) rotate(337deg)}}
+@keyframes spinB{to{transform:translate(-50%,-50%) rotate(407deg)}}
+
+/* buttons: glow + ripple */
+.button,.nav-cta{position:relative;overflow:hidden}
+.button-primary:hover{box-shadow:0 0 26px rgba(115,227,229,.45)}
+.button:active,.nav-cta:active{transform:scale(.97)}
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.38);transform:scale(0);animation:rp .6s ease-out forwards;pointer-events:none}
+@keyframes rp{to{transform:scale(3);opacity:0}}
+
+/* workflow steps are tappable */
+.workflow-step{cursor:pointer;transition:opacity .25s}
+.workflow-step:not(.active){opacity:.62}
+.workflow-step:hover,.workflow-step:focus-visible{opacity:1}
+
+/* copy toast fix: anchor to the install box */
+.install-box{position:relative}
+.copy-toast{top:0;right:8px}
+
+/* touch devices: no sticky hover states */
+@media(hover:none){
+  .path-card:hover,.reading-card:hover,.button:hover{transform:none}
+  .fx:hover>.fx-spot{opacity:0}.fx.touch-on>.fx-spot{opacity:1}
+}
+@media(prefers-reduced-motion:reduce){
+  .audit-core,.orbit-one,.orbit-two{animation:none}
+  .node{transform:none;transition:none}
+  .ripple{display:none}
+}
+
+.hero-copy .hero-actions{justify-content:flex-start}
+  </style>
+  <noscript><style>.reveal{opacity:1!important;transform:none!important}</style></noscript>
+</head>
+<body>
+  <div class="scroll-progress" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="TransformerLens-FDR home">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>TransformerLens<span class="brand-accent">-FDR</span></span>
+    </a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="primary-nav" aria-label="Open navigation"><span></span><span></span><span></span></button>
+    <nav id="primary-nav" class="primary-nav" aria-label="Primary navigation">
+      <a href="#why">Why FDR</a>
+      <a href="#paths">Inference paths</a>
+      <a href="#workflow">Workflow</a>
+      <a href="#api">API</a>
+      <a href="#reading">Reading</a>
+      <a class="nav-cta" href="https://github.com/anaykatiyar-lang/transformerlens_fdr" target="_blank" rel="noreferrer">View on GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section-shell">
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span class="eyebrow-dot"></span> Statistical audit add-on for TransformerLens</p>
+        <h1>Make circuit discovery<br><em>harder to fool.</em></h1>
+        <p class="hero-lede">TransformerLens-FDR turns activation-patching effects into an explicit, assumption-aware analysis. Explore first. Choose a defensible null. Correct across the search you actually ran.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#paths">Explore the inference paths <span aria-hidden="true">↓</span></a>
+          <button class="button button-ghost copy-button" data-copy="pip install transformerlens-fdr">Copy install command <span class="copy-label">⧉</span></button>
+        </div>
+        <div class="hero-meta" aria-label="Project metadata">
+          <span><b>Python</b> 3.10+</span><span><b>TransformerLens</b> 4.0+</span><span><b>License</b> MIT</span>
+        </div>
+      </div>
+      <div class="hero-visual reveal" aria-label="Illustration of a model-component audit">
+        <div class="visual-glow"></div>
+        <div class="audit-orbit orbit-one"></div><div class="audit-orbit orbit-two"></div>
+        <div class="audit-core"><span class="core-label">AUDIT</span><strong>FDR</strong><small>assumption-aware</small></div>
+        <div class="node node-a"><span>H04</span><b>0.91</b></div>
+        <div class="node node-b"><span>H11</span><b>0.07</b></div>
+        <div class="node node-c"><span>MLP 07</span><b>0.64</b></div>
+        <div class="node node-d"><span>H18</span><b>0.12</b></div>
+        <div class="visual-caption"><span class="caption-line"></span><span>components → evidence</span></div>
+      </div>
+    </section>
+
+    <section id="why" class="section-shell section-block">
+      <div class="section-heading reveal"><p class="eyebrow">01 / The problem</p><h2>Every extra component<br>is another hypothesis.</h2></div>
+      <div class="why-grid">
+        <div class="why-copy reveal"><p>Activation patching is a powerful way to ask which internal components contribute to a model behavior. But a sweep across many heads or layers can surface small effects by chance.</p><p>TransformerLens-FDR keeps the effect measurement visible while making the inferential step explicit: <strong>what would your data look like if the effect were absent?</strong></p><a class="text-link" href="https://github.com/anaykatiyar-lang/transformerlens_fdr/blob/main/PURPOSE_AND_USAGE.md" target="_blank" rel="noreferrer">Read the project’s purpose and usage guide <span>↗</span></a></div>
+        <div class="stat-card reveal"><div class="stat-number">P</div><div class="stat-equation">(M<sub>patched</sub> − M<sub>corrupted</sub>)<br><span>/</span> (M<sub>clean</sub> − M<sub>corrupted</sub>)</div><p class="stat-caption">Normalized patching effect: the share of the clean-to-corrupted metric gap recovered by a patch.</p></div>
+      </div>
+    </section>
+
+    <section id="paths" class="section-shell section-block paths-section">
+      <div class="section-heading centered reveal"><p class="eyebrow">02 / Choose your evidence</p><h2>Three paths. One rule:<br><em>the null comes first.</em></h2><p>Use the lightest path your experiment can defend. The package never turns an unsuitable null into valid p-values.</p></div>
+      <div class="path-grid">
+        <article class="path-card path-explore reveal"><div class="path-top"><span class="path-index">01</span><span class="pill pill-muted">default</span></div><h3>Explore</h3><p class="path-code">method="none"</p><p>Get descriptive effects and robust outlier scores when you are exploring or cannot defend a no-effect comparison.</p><div class="path-result"><span class="result-dot muted"></span><span>No p-values, q-values, or significance mask</span></div></article>
+        <article class="path-card path-signflip reveal"><div class="path-top"><span class="path-index">02</span><span class="pill pill-cyan">matched prompts</span></div><h3>Sign-flip test</h3><p class="path-code">method="signflip"</p><p>Use when per-prompt effects are independent or exchangeable and plausibly symmetric around zero under no effect.</p><div class="path-result"><span class="result-dot cyan"></span><span>Monte Carlo p-values under stated assumptions</span></div></article>
+        <article class="path-card path-null reveal"><div class="path-top"><span class="path-index">03</span><span class="pill pill-orange">control runs</span></div><h3>Empirical null</h3><p class="path-code">null_distribution=…</p><p>Pass task-specific control means that preserve the experiment while removing the relationship under test.</p><div class="path-result"><span class="result-dot orange"></span><span>Inference relative to your control design</span></div></article>
+      </div>
+      <div class="callout reveal"><span class="callout-icon">!</span><p><strong>Important:</strong> labels and matching shapes record provenance; they do not prove that a control is scientifically valid.</p></div>
+    </section>
+
+    <section id="workflow" class="section-shell section-block workflow-section">
+      <div class="section-heading reveal"><p class="eyebrow">03 / The audit loop</p><h2>From prompt pair<br>to held-out evidence.</h2></div>
+      <div class="workflow-layout">
+        <div class="workflow-steps">
+          <div class="workflow-step active reveal"><span class="step-num">01</span><div><h3>Define the effect</h3><p>Choose a metric that returns one finite value per prompt. The built-in example uses correct-minus-incorrect logit difference.</p></div></div>
+          <div class="workflow-step reveal"><span class="step-num">02</span><div><h3>Run the patching audit</h3><p>Compare clean, corrupted, and patched runs across a declared component family such as attention heads or MLP outputs.</p></div></div>
+          <div class="workflow-step reveal"><span class="step-num">03</span><div><h3>Correct the full search</h3><p>Use Benjamini–Hochberg or Benjamini–Yekutieli after valid p-values exist. Pool related audits when they belong to one search.</p></div></div>
+          <div class="workflow-step reveal"><span class="step-num">04</span><div><h3>Validate on held-out prompts</h3><p>Select on one split, then measure joint effects on disjoint groups. This reduces prompt reuse, but cannot repair a misspecified null.</p></div></div>
+        </div>
+        <div class="workflow-panel reveal"><div class="panel-label">AUDIT OUTPUT</div><div class="mini-table"><div class="mini-row mini-head"><span>component</span><span>effect</span><span>q-value</span></div><div class="mini-row"><span><i class="tiny-bar bar-high"></i>layer 04 · head 03</span><b>0.91</b><span class="q-pass">0.012</span></div><div class="mini-row"><span><i class="tiny-bar bar-mid"></i>layer 07 · head 11</span><b>0.64</b><span class="q-pass">0.031</span></div><div class="mini-row"><span><i class="tiny-bar bar-low"></i>layer 10 · head 02</span><b>0.18</b><span class="q-fail">0.280</span></div><div class="mini-row"><span><i class="tiny-bar bar-low"></i>layer 11 · head 08</span><b>0.07</b><span class="q-fail">0.614</span></div></div><div class="cli-block"><div><span class="panel-label">CIRCUIT LOCALIZATION INDEX</span><strong>0.78</strong></div><div class="cli-track"><span></span></div><p>Descriptive concentration of absolute effects — not a significance test or causal proof.</p></div></div>
+      </div>
+    </section>
+
+    <section id="api" class="section-shell section-block api-section">
+      <div class="section-heading centered reveal"><p class="eyebrow">04 / A small API for a careful workflow</p><h2>Start with <span class="code-accent">PatchingAuditor</span>.</h2><p>The package keeps the main objects close to the analysis decisions you need to explain.</p></div>
+      <div class="code-layout reveal">
+        <div class="code-window"><div class="window-bar"><span></span><span></span><span></span><small>quick_start.py</small><button class="code-copy copy-button" data-copy="pip install transformerlens-fdr">copy install</button></div><pre><code><span class="tok-purple">from</span> transformerlens_fdr <span class="tok-purple">import</span> <span class="tok-blue">PatchingAuditor</span>, logit_difference
+
+<span class="tok-comment"># Choose the model, metric, and component family</span>
+auditor = <span class="tok-blue">PatchingAuditor</span>(
+    model=model,
+    metric_fn=logit_difference,
+    fdr_threshold=<span class="tok-orange">0.05</span>,
+    fdr_method=<span class="tok-green">"fdr_by"</span>,
+    hook_type=<span class="tok-green">"attn_head"</span>,
+)
+
+results = auditor.run_patching_audit(
+    clean_tokens, corrupted_tokens,
+    correct_tokens, incorrect_tokens,
+    method=<span class="tok-green">"signflip"</span>,
+)
+
+<span class="tok-comment"># Read methods_statement, q_values, cli_score…</span></code></pre></div>
+        <div class="api-list"><div class="api-item"><span class="api-icon">◎</span><div><h3>AuditPreflight</h3><p>Check prompt count, metric gap, family size, and p-value resolution before a long audit.</p></div></div><div class="api-item"><span class="api-icon">▦</span><div><h3>AuditResults</h3><p>Inspect effects, per-prompt variation, optional p/q-values, masks, zero counts, and a copyable methods statement.</p></div></div><div class="api-item"><span class="api-icon">↗</span><div><h3>Held-out validation</h3><p>Evaluate a selected component mask on disjoint prompt groups with <code>run_heldout_validation</code>.</p></div></div><a class="button button-dark" href="https://github.com/anaykatiyar-lang/transformerlens_fdr/blob/main/README.md#plain--simple-function-list" target="_blank" rel="noreferrer">Browse the API in the README <span>↗</span></a></div>
+      </div>
+    </section>
+
+    <section class="install-band section-shell reveal"><div><p class="eyebrow">05 / Get started</p><h2>One package. Your model.<br><em>A more honest audit.</em></h2></div><div class="install-box"><code>pip install transformerlens-fdr</code><button class="copy-button" data-copy="pip install transformerlens-fdr" aria-label="Copy pip install command">⧉</button><span class="copy-toast" role="status" aria-live="polite">Copied</span></div><p class="install-note">For local development: <code>pip install -e .[test]</code> · <a href="https://github.com/anaykatiyar-lang/transformerlens_fdr/blob/main/pyproject.toml" target="_blank" rel="noreferrer">view dependencies</a></p></section>
+
+    <section id="reading" class="section-shell section-block reading-section">
+      <div class="section-heading reveal"><p class="eyebrow">06 / Context & references</p><h2>Designed for a field<br>that is learning to measure itself.</h2><p>TransformerLens-FDR sits alongside work on activation patching, circuit discovery, and faithfulness — adding a statistical audit layer to the conversation.</p></div>
+      <div class="reading-grid"><a class="reading-card reveal" href="https://arxiv.org/abs/2309.16042" target="_blank" rel="noreferrer"><span class="reading-tag">activation patching</span><h3>Best practices of activation patching</h3><p>Zhang & Nanda · 2023</p><span class="card-arrow">↗</span></a><a class="reading-card reveal" href="https://arxiv.org/abs/2304.14997" target="_blank" rel="noreferrer"><span class="reading-tag">circuit discovery</span><h3>Towards automated circuit discovery</h3><p>Conmy et al. · 2023</p><span class="card-arrow">↗</span></a><a class="reading-card reveal" href="https://arxiv.org/abs/2403.17806" target="_blank" rel="noreferrer"><span class="reading-tag">faithfulness</span><h3>Have faith in faithfulness</h3><p>Hanna, Pezzelle & Belinkov · 2024</p><span class="card-arrow">↗</span></a><a class="reading-card reveal" href="https://doi.org/10.1111/j.2517-6161.1995.tb02031.x" target="_blank" rel="noreferrer"><span class="reading-tag">foundational statistics</span><h3>Controlling the false discovery rate</h3><p>Benjamini & Hochberg · 1995</p><span class="card-arrow">↗</span></a></div>
+      <div class="source-note reveal"><span>Project source of truth</span><a href="https://github.com/anaykatiyar-lang/transformerlens_fdr" target="_blank" rel="noreferrer">github.com/anaykatiyar-lang/transformerlens_fdr <span>↗</span></a></div>
+    </section>
+
+    <section class="final-cta section-shell reveal"><div class="final-mark" aria-hidden="true">FDR<span>→</span></div><h2>Make the assumptions<br><em>part of the result.</em></h2><p>Explore honestly. Correct deliberately. Validate outside the prompts that made you curious.</p><div class="hero-actions"><a class="button button-primary" href="https://github.com/anaykatiyar-lang/transformerlens_fdr" target="_blank" rel="noreferrer">Open the repository <span>↗</span></a><a class="button button-ghost" href="#top">Back to top ↑</a></div></section>
+  </main>
+
+  <footer class="site-footer section-shell"><span>© 2026 TransformerLens-FDR</span><span>Built for careful mechanistic interpretability.</span><a href="https://github.com/anaykatiyar-lang/transformerlens_fdr/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT License</a></footer>
+  <script>
+(function () {
+  'use strict';
+  var root = document.documentElement;
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Scroll progress bar
+  var bar = document.querySelector('.scroll-progress');
+  function onScroll() {
+    var max = root.scrollHeight - window.innerHeight;
+    if (bar) bar.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + '%';
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  // Reveal on scroll (styles.css hides .reveal until .visible is added)
+  var items = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    items.forEach(function (el) { io.observe(el); });
+  } else {
+    items.forEach(function (el) { el.classList.add('visible'); });
+  }
+
+  // Mobile navigation
+  var toggle = document.querySelector('.nav-toggle');
+  var nav = document.getElementById('primary-nav');
+  if (toggle && nav) {
+    toggle.addEventListener('click', function () {
+      var open = nav.classList.toggle('open');
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+    });
+    nav.addEventListener('click', function (e) {
+      if (e.target.closest('a')) {
+        nav.classList.remove('open');
+        toggle.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  // Copy buttons
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    return new Promise(function (res, rej) {
+      var t = document.createElement('textarea');
+      t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.appendChild(t); t.select();
+      try { document.execCommand('copy') ? res() : rej(); } catch (err) { rej(err); }
+      document.body.removeChild(t);
+    });
+  }
+  document.querySelectorAll('.copy-button').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      copyText(btn.getAttribute('data-copy') || '').then(function () {
+        var toast = btn.parentElement.querySelector('.copy-toast') || document.querySelector('.copy-toast');
+        if (toast) { toast.classList.add('show'); setTimeout(function () { toast.classList.remove('show'); }, 1400); }
+        var label = btn.querySelector('.copy-label');
+        if (label) { var old = label.textContent; label.textContent = '✓'; setTimeout(function () { label.textContent = old; }, 1400); }
+      }).catch(function () {});
+    });
+  });
+
+  // Glow: page spotlight follows cursor/finger; cards get their own spotlight
+  var targets = document.querySelectorAll('.path-card,.reading-card,.workflow-panel,.stat-card,.code-window,.api-item,.hero-visual');
+  targets.forEach(function (el) {
+    el.classList.add('fx');
+    var s = document.createElement('span');
+    s.className = 'fx-spot'; s.setAttribute('aria-hidden', 'true');
+    el.appendChild(s);
+  });
+  function place(el, x, y) {
+    var r = el.getBoundingClientRect();
+    el.style.setProperty('--cx', (x - r.left) + 'px');
+    el.style.setProperty('--cy', (y - r.top) + 'px');
+  }
+  window.addEventListener('pointermove', function (e) {
+    root.style.setProperty('--mx', e.clientX + 'px');
+    root.style.setProperty('--my', e.clientY + 'px');
+    var c = e.target.closest && e.target.closest('.fx');
+    if (c) place(c, e.clientX, e.clientY);
+  }, { passive: true });
+  window.addEventListener('pointerdown', function (e) {
+    var c = e.target.closest && e.target.closest('.fx');
+    if (!c) return;
+    place(c, e.clientX, e.clientY);
+    if (e.pointerType !== 'mouse') {           // touch / pen: brief glow on tap
+      c.classList.add('touch-on');
+      setTimeout(function () { c.classList.remove('touch-on'); }, 700);
+    }
+  }, { passive: true });
+
+  // Ripple on buttons
+  document.addEventListener('click', function (e) {
+    if (reduce) return;
+    var b = e.target.closest('.button,.nav-cta');
+    if (!b) return;
+    var r = b.getBoundingClientRect(), d = Math.max(r.width, r.height);
+    var s = document.createElement('span');
+    s.className = 'ripple';
+    s.style.cssText = 'width:' + d + 'px;height:' + d + 'px;left:' + (e.clientX - r.left - d / 2) + 'px;top:' + (e.clientY - r.top - d / 2) + 'px';
+    b.appendChild(s);
+    setTimeout(function () { s.remove(); }, 650);
+  });
+
+  // Hero: nodes drift with the pointer; tapping a node highlights it
+  var hv = document.querySelector('.hero-visual');
+  if (hv) {
+    if (!reduce) {
+      hv.addEventListener('pointermove', function (e) {
+        var r = hv.getBoundingClientRect();
+        hv.style.setProperty('--px', ((e.clientX - r.left) / r.width - 0.5).toFixed(3));
+        hv.style.setProperty('--py', ((e.clientY - r.top) / r.height - 0.5).toFixed(3));
+      });
+      hv.addEventListener('pointerleave', function () {
+        hv.style.setProperty('--px', 0); hv.style.setProperty('--py', 0);
+      });
+    }
+    hv.querySelectorAll('.node').forEach(function (n) {
+      n.addEventListener('click', function () { n.classList.toggle('hot'); });
+    });
+  }
+
+  // Workflow: tap or press a step to make it the active one
+  var steps = document.querySelectorAll('.workflow-step');
+  steps.forEach(function (st) {
+    st.tabIndex = 0;
+    function activate() {
+      steps.forEach(function (x) { x.classList.remove('active'); });
+      st.classList.add('active');
+    }
+    st.addEventListener('click', activate);
+    st.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+    });
+  });
+})();
+
+  </script>
+</body>
+</html>
