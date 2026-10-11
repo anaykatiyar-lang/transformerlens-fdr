@@ -266,12 +266,37 @@ Reference: Benjamini, Y. and Hochberg, Y. (1995), “Controlling the False Disco
 
 > **Published benchmark result:** The BH calculation reproduces Benjamini and Hochberg's 1995 example: **4 of 15 hypotheses are rejected** at a target FDR of 0.05.
 
+This is a calculation check against a published example, not a model experiment. The repository includes this one exact published numerical benchmark; it does not claim the simulation results below come from a research paper.
+
 The rest of the test suite checks the implementation:
 
 - **Sign-flip math:** compared with exact results on small examples; simulations check symmetric nulls.
 - **Known-answer examples:** toy models check whether planted component effects are recovered.
 - **TransformerLens 4 integration:** native bridge tests check hook integration. An optional GPT-2 test uses cached model weights.
-- **Skewed data:** reported as a diagnostic because sign-flip validity requires symmetry about zero.
+- **Skewed data:** reported as a diagnostic, not counted as a calibration pass, because sign-flip validity requires symmetry about zero.
+
+### Calibration run
+
+I ran the full calibration report with seed `20261009`: 1,000 simulated repetitions per main setting, 30 prompts per repetition, 12 tested components, 999 sign flips, and Benjamini–Yekutieli (BY) at 0.05. No TransformerLens model or downloaded model weights were used.
+
+| Simulated symmetric null | KS distance from uniform | KS p-value |
+| --- | ---: | ---: |
+| Normal | 0.031 | 0.286 |
+| Heavy-tailed *t* (3 df) | 0.018 | 0.896 |
+| Positively correlated normal effects | 0.032 | 0.252 |
+| Symmetric mixture | 0.030 | 0.323 |
+
+The KS test did not detect a departure from uniform p-values in these runs. That is a simulation check, not proof of uniformity in every setting.
+
+| True-null share in simulation | Observed false-discovery rate | Monte Carlo SE | Power |
+| ---: | ---: | ---: | ---: |
+| 50% | 0.79% | 0.11 percentage points | 99.32% |
+| 90% | 0.89% | 0.23 percentage points | 91.10% |
+| 100% | 0.70% | 0.26 percentage points | Not applicable (no planted effects) |
+
+In the all-null run, at least one component was rejected in **0.70%** of repetitions (nominal level: 5%). These rates describe this generated data, 12-test family, prompt count, and permutation budget. They do not establish calibration for arbitrary dependence or real model prompts.
+
+The mean-zero skew diagnostics used 250 repetitions per setting. Observed rejection rates ranged from 0% to 2.4%; because sign-flip theory requires symmetry, these diagnostic outcomes do **not** validate use on skewed data.
 
 These checks support the software; they do not show that a null is right for your dataset or that results are calibrated for every model.
 
@@ -285,7 +310,7 @@ python -m pytest -q tests/test_published_benchmark.py
 python -m pytest -q tests/test_stress.py tests/test_calibration.py tests/test_bridge_native.py
 ```
 
-For the longer calibration report, run `python -m tests.test_calibration`.
+For the calibration pytest checks, run `python -m pytest -q tests/test_calibration.py`. For the longer report and tables, run `python -m tests.test_calibration`.
 
 **Keep in mind:** sign-flip assumes independent prompt effects that are symmetric around zero. Repeated or related prompt templates can violate the independence assumption. BH's dependence guarantee is not established for every set of model components.
 
