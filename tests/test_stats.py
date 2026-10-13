@@ -1,6 +1,13 @@
 import torch
 import pytest
-from transformerlens_fdr.stats import apply_fdr_adjustment, calculate_p_values, compute_control_baseline
+from transformerlens_fdr.stats import (
+    apply_fdr_adjustment,
+    calculate_p_values,
+    compute_control_baseline,
+    compute_robust_baseline,
+    signflip_minimum_p,
+    signflip_p_values,
+)
 from transformerlens_fdr.metrics import circuit_localization_index
 
 
@@ -59,6 +66,38 @@ def test_fdr_rejects_invalid_alpha(alpha):
 def test_fdr_rejects_unsupported_method():
     with pytest.raises(ValueError, match="method"):
         apply_fdr_adjustment(torch.tensor([0.01, 0.5]), method="bonferroni")
+
+
+def test_fdr_boundary_uses_float64_threshold_arithmetic():
+    # float32 stores 0.0125 slightly above the exact BH first threshold.
+    p = torch.tensor([0.0125, 0.5, 0.8, 1.0], dtype=torch.float32)
+    _, rejected = apply_fdr_adjustment(p, alpha=0.05, method="fdr_bh")
+    assert not rejected.any()
+
+
+def test_sparse_nonflat_map_does_not_use_epsilon_as_robust_scale():
+    effects = torch.tensor([0.0] * 20 + [1.0, -1.0])
+    median, scale = compute_robust_baseline(effects)
+    assert median == 0
+    assert scale > 0.1
+
+
+def test_signflip_exact_enumeration_and_resolution_floor():
+    effects = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+    p = signflip_p_values(effects, n_perm=8)
+    signs = torch.tensor(
+        [[1.0, -1.0, -1.0, -1.0], [1.0, 1.0, -1.0, -1.0],
+         [1.0, -1.0, 1.0, -1.0], [1.0, 1.0, 1.0, -1.0],
+         [1.0, -1.0, -1.0, 1.0], [1.0, 1.0, -1.0, 1.0],
+         [1.0, -1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 1.0]], dtype=torch.float64
+    )
+    x = effects.reshape(1, 4).double()
+    values = signs * x
+    stats = values.mean(-1) / (values.std(-1, unbiased=True) / 2.0)
+    observed = x.mean(-1) / (x.std(-1, unbiased=True) / 2.0)
+    expected = (stats.abs() >= observed.abs()).double().mean()
+    assert p.item() == expected.item()
+    assert signflip_minimum_p(4, 8) == 1 / 8
 
 
 def test_fdr_by_adjustment():

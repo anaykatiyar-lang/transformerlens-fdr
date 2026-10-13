@@ -1,6 +1,4 @@
 import torch
-import numpy as np
-import scipy.stats as stats
 from statsmodels.stats.multitest import multipletests
 from typing import Tuple
 import math
@@ -51,8 +49,12 @@ def compute_robust_baseline(
     if not torch.isfinite(sigma):
         raise ValueError("Robust baseline scale must be finite.")
 
-    # A flat effect map has no outliers; return a finite scale so exploratory
-    # scores remain available (and equal zero) instead of aborting the audit.
+    # Sparse maps often have MAD=0 even when a few components are nonzero.
+    # In that degenerate case use the map's standard deviation as a finite,
+    # explicitly less-robust fallback so a non-flat map is not scored against
+    # an artificial epsilon scale.
+    if sigma <= epsilon:
+        sigma = effects.std(unbiased=False)
     return median, sigma.clamp_min(epsilon)
 
 def calculate_p_values(
@@ -118,7 +120,8 @@ def calculate_empirical_p_values(
 
     exceedances = (null_stat >= observed_stat).sum(dim=0)
     # Plus-one correction keeps Monte Carlo/permutation p-values above zero.
-    p_values = (exceedances + 1).to(patching_effects.dtype) / (null_distribution.shape[0] + 1)
+    result_dtype = torch.float32 if patching_effects.device.type == "mps" else torch.float64
+    p_values = (exceedances + 1).to(result_dtype) / (null_distribution.shape[0] + 1)
     return p_values
 
 
@@ -131,11 +134,13 @@ def signflip_p_values(
 ) -> torch.Tensor:
     """Paired sign-flip p-values for effects shaped [layers, components, prompts].
 
-    The null hypothesis is that independent/exchangeable prompt effects are
+    The null hypothesis is that prompt effects are independent and each is
     symmetric about zero. The same sign pattern is applied to every component
     to preserve their dependence structure under the joint null. Values whose
     absolute magnitude is at most ``zero_effect_tolerance`` are set to zero
     before computing the statistic; use a tolerance in normalized-effect units.
+    The routine enumerates every unique sign pattern when its count is no
+    larger than ``n_perm``; otherwise it uses the requested Monte Carlo draws.
     """
     if effects.ndim != 3:
         raise ValueError("effects must have shape [layers, components, prompts].")
@@ -149,7 +154,8 @@ def signflip_p_values(
         raise ValueError("effects must be finite.")
 
     n_layers, n_components, n_prompts = effects.shape
-    x = effects.reshape(n_layers * n_components, n_prompts).clone()
+    result_dtype = torch.float32 if effects.device.type == "mps" else torch.float64
+    x = effects.reshape(n_layers * n_components, n_prompts).to(result_dtype).clone()
     x[x.abs() <= zero_effect_tolerance] = 0
 
     def studentized(values: torch.Tensor) -> torch.Tensor:
@@ -158,25 +164,57 @@ def signflip_p_values(
         return mean / (std / (n_prompts ** 0.5))
 
     observed = studentized(x)
-    # Generate permutations in chunks to limit memory while sharing each
-    # prompt-sign pattern across all tested components.
+    # Enumerate the unique sign patterns when feasible. For a two-sided test,
+    # patterns s and -s give the same absolute statistic, so fix the first
+    # sign to +1 and enumerate 2**(B-1) patterns.
+    exponent = n_prompts - 1 if two_sided else n_prompts
+    exact_count = (1 << exponent) if exponent <= 62 else None
+    exact = exact_count is not None and exact_count <= n_perm
+    total = exact_count if exact else n_perm
     exceedances = torch.zeros_like(observed, dtype=torch.long)
-    chunk_size = min(256, n_perm)
+    chunk_size = min(256, total)
     generator_device = generator.device if generator is not None else effects.device
-    for start in range(0, n_perm, chunk_size):
-        count = min(chunk_size, n_perm - start)
-        signs = torch.randint(
-            0, 2, (count, n_prompts), generator=generator,
-            device=generator_device,
-        ).mul_(2).sub_(1).to(device=effects.device, dtype=effects.dtype)
+    tie_tolerance = (
+        16 * torch.finfo(result_dtype).eps * observed.abs().clamp_min(1.0)
+    )
+    for start in range(0, total, chunk_size):
+        count = min(chunk_size, total - start)
+        if exact:
+            indices = torch.arange(start, start + count, device=effects.device)
+            bit_positions = torch.arange(exponent, device=effects.device)
+            signs = (((indices[:, None] >> bit_positions) & 1) * 2 - 1).to(result_dtype)
+            if two_sided:
+                signs = torch.cat((torch.ones((count, 1), device=effects.device, dtype=result_dtype), signs), dim=1)
+        else:
+            signs = torch.randint(
+                0, 2, (count, n_prompts), generator=generator,
+                device=generator_device,
+            ).mul_(2).sub_(1).to(device=effects.device, dtype=result_dtype)
         null_stats = studentized(signs[:, None, :] * x[None, :, :])
         if two_sided:
-            exceedances += (null_stats.abs() >= observed.abs()).sum(dim=0)
+            exceedances += (
+                null_stats.abs() >= observed.abs() - tie_tolerance
+            ).sum(dim=0)
         else:
-            exceedances += (null_stats >= observed).sum(dim=0)
+            exceedances += (null_stats >= observed - tie_tolerance).sum(dim=0)
 
-    p_values = (exceedances + 1).to(effects.dtype) / (n_perm + 1)
+    p_values = (
+        exceedances.to(result_dtype) / total if exact
+        else (exceedances + 1).to(result_dtype) / (n_perm + 1)
+    )
     return p_values.reshape(n_layers, n_components)
+
+
+def signflip_minimum_p(n_prompts: int, n_perm: int, two_sided: bool = True) -> float:
+    """Return the attainable p-value floor for the chosen sign-flip design."""
+    if not isinstance(n_prompts, int) or n_prompts < 2:
+        raise ValueError("n_prompts must be an integer of at least 2.")
+    if not isinstance(n_perm, int) or n_perm < 1:
+        raise ValueError("n_perm must be a positive integer.")
+    exponent = n_prompts - 1 if two_sided else n_prompts
+    if exponent <= 62 and (1 << exponent) <= n_perm:
+        return 1.0 / (1 << exponent)
+    return 1.0 / (n_perm + 1)
 
 def apply_fdr_adjustment(
     p_values: torch.Tensor,
@@ -203,11 +241,14 @@ def apply_fdr_adjustment(
     if method not in {"fdr_bh", "fdr_by"}:
         raise ValueError("method must be 'fdr_bh' or 'fdr_by'.")
 
-    p_np = p_values.detach().cpu().numpy().flatten()
+    # statsmodels makes boundary decisions in the input dtype; always do the
+    # sorting and threshold arithmetic in float64 to avoid float32 tie errors.
+    p_np = p_values.detach().to(torch.float64).cpu().numpy().flatten()
     
     reject, pvals_corrected, _, _ = multipletests(p_np, alpha=alpha, method=method)
     
-    q_values = torch.tensor(pvals_corrected, dtype=p_values.dtype, device=p_values.device).reshape(p_values.shape)
+    q_dtype = torch.float32 if p_values.device.type == "mps" else torch.float64
+    q_values = torch.tensor(pvals_corrected, dtype=q_dtype, device=p_values.device).reshape(p_values.shape)
     passed_fdr = torch.tensor(reject, dtype=torch.bool, device=p_values.device).reshape(p_values.shape)
     
     return q_values, passed_fdr

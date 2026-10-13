@@ -254,7 +254,7 @@ For reproducibility, record the exact prompt pairs and model ID/revision, hook t
 - **`resolution_report(n_tests, alpha, method, p_min)`**
   Reports the first-step threshold and the necessary minimum rank for a rejection at the available p-value resolution.
 - **`signflip_p_values(effects, n_perm, two_sided)`**
-  Computes Monte Carlo sign-flip p-values for `[layers, components, prompts]` under a symmetry-about-zero null.
+  Computes sign-flip p-values for `[layers, components, prompts]` under a symmetry-about-zero null. It enumerates all unique patterns when feasible and otherwise uses Monte Carlo sampling.
 
 ### Visualization (Functions)
 - **`plot_fdr_heatmap(results, title)`**<br>

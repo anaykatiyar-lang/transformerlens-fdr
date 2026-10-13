@@ -14,6 +14,7 @@ from .stats import (
     compute_robust_baseline,
     resolution_report,
     signflip_p_values,
+    signflip_minimum_p,
 )
 from .metrics import normalized_patching_effect, circuit_localization_index
 
@@ -69,8 +70,8 @@ def _format_methods_statement(
     )
     if null_description.startswith("sign-flip"):
         null_claim = (
-            "Sign-flip p-values assume prompt effects are independent or "
-            "exchangeable and symmetric about zero under the null."
+            "Sign-flip p-values assume prompt effects are independent and each "
+            "is symmetric about zero under the null."
         )
     else:
         null_claim = (
@@ -252,7 +253,8 @@ def adjust_audits_together(
         count = result.p_values.numel()
         q = q_values[cursor:cursor + count].reshape(result.p_values.shape)
         mask = significant[cursor:cursor + count].reshape(result.p_values.shape)
-        result.q_values = q.to(device=result.p_values.device, dtype=result.p_values.dtype)
+        q_dtype = torch.float32 if result.p_values.device.type == "mps" else torch.float64
+        result.q_values = q.to(device=result.p_values.device, dtype=q_dtype)
         result.significant_mask = mask.to(device=result.p_values.device)
         result.family_size = family_size
         result.resolution_report = dict(resolution)
@@ -283,6 +285,7 @@ class PatchingAuditor:
         n_perm: int = 9999,
         hook_type: str = "attn_head",
         zero_effect_tolerance: float = 1e-8,
+        head_batch_size: int = 4,
     ):
         """Create an auditor.
 
@@ -303,6 +306,8 @@ class PatchingAuditor:
             raise ValueError("fdr_method must be 'fdr_bh' or 'fdr_by'.")
         if not math.isfinite(zero_effect_tolerance) or zero_effect_tolerance < 0:
             raise ValueError("zero_effect_tolerance must be finite and non-negative.")
+        if not isinstance(head_batch_size, int) or head_batch_size < 1:
+            raise ValueError("head_batch_size must be a positive integer.")
 
         self.model = model
         self.metric_fn = metric_fn
@@ -311,7 +316,15 @@ class PatchingAuditor:
         self.n_perm = n_perm
         self.hook_type = hook_type
         self.zero_effect_tolerance = float(zero_effect_tolerance)
-        self._hook_cfg = HOOK_CONFIGS[hook_type]
+        self.head_batch_size = head_batch_size
+        self._hook_cfg = dict(HOOK_CONFIGS[hook_type])
+        if hook_type == "resid_mid" and callable(
+            getattr(model, "set_use_hook_mlp_in", None)
+        ):
+            # TransformerLens 4 exposes the legacy mid-residual location as
+            # hook_mlp_in (the MLP branch entry), behind an opt-in hook flag.
+            model.set_use_hook_mlp_in(True)
+            self._hook_cfg["hook_suffix"] = "hook_mlp_in"
 
     def _get_audit_shape(self, seq_len: int) -> tuple:
         n_layers = self.model.cfg.n_layers
@@ -364,13 +377,6 @@ class PatchingAuditor:
             raise ValueError("Token batches and sequences must be non-empty.")
         if clean_tokens.device != corrupted_tokens.device:
             raise ValueError("clean_tokens and corrupted_tokens must be on the same device.")
-        tokenizer = getattr(self.model, "tokenizer", None)
-        pad_token_id = getattr(tokenizer, "pad_token_id", None)
-        if pad_token_id is not None:
-            if not torch.equal(clean_tokens == pad_token_id, corrupted_tokens == pad_token_id):
-                raise ValueError(
-                    "clean_tokens and corrupted_tokens must use matching padding positions."
-                )
         if clean_tokens.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8):
             raise TypeError("Token ids must use an integer tensor dtype.")
         if corrupted_tokens.dtype not in (torch.int8, torch.int16, torch.int32, torch.int64, torch.uint8):
@@ -402,6 +408,7 @@ class PatchingAuditor:
                 stacklevel=3,
             )
 
+    @torch.no_grad()
     def check_setup(
         self,
         clean_tokens: torch.Tensor,
@@ -460,7 +467,10 @@ class PatchingAuditor:
             effective_method = "empirical_null"
             p_min = 1.0 / (null_values.shape[0] + 1)
         elif method == "signflip":
-            p_min = 1.0 / (self.n_perm + 1)
+            p_min = (
+                signflip_minimum_p(batch_size, self.n_perm)
+                if batch_size >= 2 else 1.0 / (self.n_perm + 1)
+            )
             if batch_size < 2:
                 messages.append("Sign-flip testing requires at least two prompt effects.")
         else:
@@ -557,36 +567,37 @@ class PatchingAuditor:
         corrupted_metric,
         denominator,
     ):
-        """Patch each attention head in one replicated-batch forward pass."""
+        """Patch attention heads in bounded replicated-batch forward passes."""
         n_heads = self.model.cfg.n_heads
         hook_name = _build_hook_name(layer, self._hook_cfg["hook_suffix"])
         batch_size = corrupted_tokens.shape[0]
-        batched_tokens = corrupted_tokens.repeat(n_heads, 1)
-        batched_correct = correct_tokens.repeat(n_heads)
-        batched_incorrect = incorrect_tokens.repeat(n_heads)
+        effects = torch.zeros((n_heads, batch_size), device=corrupted_tokens.device, dtype=torch.float32)
+        for first_head in range(0, n_heads, self.head_batch_size):
+            heads = list(range(first_head, min(first_head + self.head_batch_size, n_heads)))
+            count = len(heads)
+            batched_tokens = corrupted_tokens.repeat(count, 1)
+            batched_correct = correct_tokens.repeat(count)
+            batched_incorrect = incorrect_tokens.repeat(count)
 
-        def batched_patch_hook(activations, hook):
-            clean_act = clean_cache[hook.name]
-            for head in range(n_heads):
-                start, end = head * batch_size, (head + 1) * batch_size
-                activations[start:end, :, head, :] = clean_act[:, :, head, :]
-            return activations
+            def batched_patch_hook(activations, hook):
+                clean_act = clean_cache[hook.name]
+                for local_idx, head in enumerate(heads):
+                    start, end = local_idx * batch_size, (local_idx + 1) * batch_size
+                    activations[start:end, :, head, :] = clean_act[:, :, head, :]
+                return activations
 
-        logits = self.model.run_with_hooks(
-            batched_tokens,
-            return_type="logits",
-            fwd_hooks=[(hook_name, batched_patch_hook)],
-        )
-        effects = torch.zeros(
-            (n_heads, batch_size), device=logits.device, dtype=logits.dtype
-        )
-        for head in range(n_heads):
-            start, end = head * batch_size, (head + 1) * batch_size
-            patched_metric = self._metric_per_prompt(
-                logits[start:end], batched_correct[start:end],
-                batched_incorrect[start:end], batch_size,
+            logits = self.model.run_with_hooks(
+                batched_tokens,
+                return_type="logits",
+                fwd_hooks=[(hook_name, batched_patch_hook)],
             )
-            effects[head] = (patched_metric - corrupted_metric) / denominator
+            for local_idx, head in enumerate(heads):
+                start, end = local_idx * batch_size, (local_idx + 1) * batch_size
+                patched_metric = self._metric_per_prompt(
+                    logits[start:end], batched_correct[start:end],
+                    batched_incorrect[start:end], batch_size,
+                )
+                effects[head] = (patched_metric - corrupted_metric) / denominator
         return effects
 
     def _patch_layer_sequential(
@@ -632,6 +643,7 @@ class PatchingAuditor:
         )
         return ((patched_metric - corrupted_metric) / denominator).unsqueeze(0)
 
+    @torch.no_grad()
     def run_patching_audit(
         self,
         clean_tokens: torch.Tensor,
@@ -652,8 +664,9 @@ class PatchingAuditor:
         is supplied, it must match this audit's prompt count. A one-dimensional
         pooled null is accepted only with ``pooled_null=True`` and is broadcast
         to each component with a warning. Clean/corrupted tensors must use the
-        same sequence shape and padding positions; padding is checked when the
-        model exposes a tokenizer pad ID.
+        same sequence shape. For padded batches, callers must ensure padding
+        positions are aligned; token IDs alone cannot distinguish padding from
+        a legitimate occurrence of the tokenizer's pad-token ID.
 
         ``method='signflip'`` tests the assumption that per-prompt effects are
         symmetric about zero. With no valid null method, inferential fields are
@@ -799,9 +812,9 @@ class PatchingAuditor:
             )
             adjusted_effects = mean_effects
             calibrated = True
-            minimum_attainable_p = 1.0 / (self.n_perm + 1)
+            minimum_attainable_p = signflip_minimum_p(batch_size, self.n_perm)
             null_description = (
-                "sign-flip over prompts (requires independent/exchangeable effects "
+                "sign-flip over prompts (requires independent prompt effects, each "
                 "symmetric about zero; "
                 "see skew robustness diagnostics)"
             )
@@ -889,6 +902,7 @@ class PatchingAuditor:
             ),
         )
 
+    @torch.no_grad()
     def run_joint_patching(
         self,
         clean_tokens,
@@ -966,6 +980,7 @@ class PatchingAuditor:
         )
         return ((patched_metric - corrupted_metric).mean() / denominator).item()
 
+    @torch.no_grad()
     def run_heldout_validation(
         self,
         selection_inputs: dict,

@@ -9,7 +9,7 @@ TransformerLens-FDR helps compare activation-patching effects across model compo
 | Situation | Recommended path | Interpretation |
 | --- | --- | --- |
 | Exploring or no defensible no-effect comparison | `method="none"` (default) | Descriptive effect and outlier summaries only |
-| Independent or exchangeable prompt effects; plausible symmetry around zero under no effect | `method="signflip"` | Inference depends on those assumptions; they are not checked by the package |
+| Independent prompt effects, each symmetric around zero under no effect | `method="signflip"` | Exchangeability alone is not sufficient; the package cannot validate symmetry or independence |
 | Task-specific controls preserve the experiment while removing the relation being tested | `null_distribution=...` | Inference is relative to the control design, which the researcher must justify |
 | Neither null design is defensible for the data | Stay exploratory or develop and validate a suitable null | Do not read descriptive rankings as significance |
 
