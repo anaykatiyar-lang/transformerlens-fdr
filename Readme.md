@@ -106,7 +106,7 @@ This updates the q-values and significance masks on both results. Separate calls
 | --- | --- | --- |
 | `attn_head` (default) | One attention head's `attn.hook_z` output at a time | Head-specific sufficiency effects. |
 | `mlp_out` | The whole MLP output at each layer | A layer-level effect, not an individual-neuron score. Architectures with a post-MLP normalization or other intervening operation may interpret this hook differently; inspect the model's hook placement and validate it for your architecture. |
-| `resid_mid` | The residual stream at each token position and layer | A whole-stream intervention, not a component-specific attribution. Since it restores a broad activation, effects near 1 across layers can be expected and do not identify individual heads or neurons. |
+| `resid_mid` | The residual stream at each token position and layer | A whole-stream intervention, not a component-specific attribution. In TransformerLens 4 bridges that expose `set_use_hook_mlp_in`, it resolves to `blocks.{layer}.hook_mlp_in` (the MLP-branch entry); older or other architectures may use a different hook. These locations may not be numerically comparable. Effects near 1 can occur because this restores a broad activation and does not identify individual heads or neurons. |
 
 These are activation-patching locations, not claims that all architectures implement the same computation at each location. The tests exercise native TransformerLens 4 bridges and a cached GPT-2 integration path; that is not validation of every supported architecture or of every hook's scientific interpretation.
 
@@ -170,6 +170,7 @@ Returned by the auditor. Contains:
 - `p_values` / `q_values`: Optional tensors, present only when a null method was requested.
 - `significant_mask`: Optional boolean mask, present only when p-values were produced.
 - `outlier_scores`: Robust descriptive scores; not p-values.
+- `outlier_scale_method`: The scale used for these scores (`scaled MAD`, or population standard deviation when the MAD is degenerate; flat maps use an epsilon floor).
 - `calibrated` / `null_description`: State whether inference was attempted and which null assumption was used.
 - `family_size` / `resolution_report`: Number of components in the declared correction family; the rank report is present when calibrated p-values were adjusted.
 - `clean_corrupted_gap_mean` / `clean_corrupted_gap_std`: Mean clean-to-corrupted metric gap and its prompt spread; spread is omitted for one prompt.
@@ -238,11 +239,11 @@ print(result.summary_df.sort_values("q_value").head())
 
 `TransformerBridge` defaults to raw Hugging Face numerics; `enable_compatibility_mode()` requests HookedTransformer-equivalent numerics. Keep the mode fixed when comparing results and report it. The repository's GPT-2 example and small-model auditor tests use compatibility mode; optional real-model integration tests exercise the bridge separately. Compatibility mode changes the numerical convention, so it can change measured effects.
 
-For reproducibility, record the exact prompt pairs and model ID/revision, hook type, metric, correction family and method, `n_perm`, compatibility mode, and the package/TransformerLens versions. `AuditResults` records the correction and resolution details, but does **not** store the RNG seed, exact `n_perm`, model revision, or package versions. The auditor currently uses PyTorch's global random generator for sign flips; set and record `torch.manual_seed(...)` before the audit if you need a repeatable permutation stream.
+For reproducibility, record the exact prompt pairs and model ID/revision, hook type, metric, correction family and method, `n_perm`, compatibility mode, and the package/TransformerLens versions. `AuditResults` records the correction and resolution details, whether sign flips used exact enumeration or Monte Carlo sampling, the number of patterns evaluated, and the resolved hook name for each layer. It does **not** store the RNG seed, exact `n_perm`, model revision, or package versions. The auditor currently uses PyTorch's global random generator for sign flips; set and record `torch.manual_seed(...)` before the audit if you need a repeatable permutation stream.
 
 ### Metrics & Stats (Functions)
 - **`logit_difference(logits, correct_tokens, incorrect_tokens)`**<br>
-  Returns the correct-minus-incorrect logit difference for each prompt.
+  Returns the correct-minus-incorrect logit difference for each prompt using the final sequence position. With right-padded inputs, that can be a padding position; use a custom metric that selects each prompt's last non-padding position.
 - **`normalized_patching_effect(patched, clean, corrupted)`**<br>
   Calculates $P$.
 - **`circuit_localization_index(normalized_effects)`**<br>

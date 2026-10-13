@@ -11,10 +11,11 @@ import torch
 from .stats import (
     apply_fdr_adjustment,
     calculate_empirical_p_values,
-    compute_robust_baseline,
+    _compute_robust_baseline_details,
     resolution_report,
     signflip_p_values,
     signflip_minimum_p,
+    signflip_permutation_info,
 )
 from .metrics import normalized_patching_effect, circuit_localization_index
 
@@ -52,11 +53,17 @@ def _format_methods_statement(
     alpha: Optional[float],
     family_size: int,
     family_note: Optional[str] = None,
+    outlier_scale_method: Optional[str] = None,
 ) -> str:
+    outlier_note = (
+        f" Descriptive outlier scores use {outlier_scale_method}."
+        if outlier_scale_method else ""
+    )
     if not calibrated:
         return (
             "Exploratory analysis only: no null-hypothesis p-values or FDR "
             "correction were computed. Outlier scores and CLI are descriptive."
+            + outlier_note
         )
 
     correction = {
@@ -84,7 +91,7 @@ def _format_methods_statement(
         f"{correction} FDR at alpha={alpha:g} over {family_size} tests "
         f"{family_description}. {null_claim} {correction_claim} These assumptions were not "
         "validated automatically; significance is not evidence of practical "
-        "importance or causality."
+        "importance or causality." + outlier_note
     )
 
 
@@ -132,6 +139,10 @@ class AuditResults:
     numerically_zero_components: int = 0
     null_metadata: Optional[dict] = None
     methods_statement: str = ""
+    resolved_hook_names: tuple = ()
+    signflip_mode: Optional[str] = None
+    signflip_pattern_count: Optional[int] = None
+    outlier_scale_method: Optional[str] = None
 
     def format_summary(self) -> str:
         """Return a concise, copyable report of the method and key diagnostics."""
@@ -157,6 +168,18 @@ class AuditResults:
                 f"first-step threshold {report['first_step_threshold']:.6g}; "
                 f"minimum rank {report['min_rank_for_any_rejection']} "
                 f"({report['status']})"
+            )
+        if self.resolved_hook_names:
+            lines.append("Resolved hook names: " + ", ".join(self.resolved_hook_names))
+        if self.signflip_mode is not None:
+            description = (
+                "exact enumeration of unique two-sided patterns"
+                if self.signflip_mode == "exact"
+                else "Monte Carlo sampling"
+            )
+            lines.append(
+                f"Sign-flip computation: {description} over "
+                f"{self.signflip_pattern_count} sign patterns."
             )
         lines.append(f"Descriptive CLI: {self.cli_score:.4f}")
         return "\n".join(lines)
@@ -267,6 +290,7 @@ def adjust_audits_together(
             alpha,
             family_size,
             family_note=f"jointly across {len(results)} audits",
+            outlier_scale_method=result.outlier_scale_method,
         )
         result.summary_df["q_value"] = result.q_values.detach().cpu().reshape(-1).tolist()
         result.summary_df["significant"] = result.significant_mask.detach().cpu().reshape(-1).tolist()
@@ -671,6 +695,9 @@ class PatchingAuditor:
         ``method='signflip'`` tests the assumption that per-prompt effects are
         symmetric about zero. With no valid null method, inferential fields are
         ``None`` and only robust exploratory outlier scores are returned.
+        The default ``logit_difference`` metric reads the final sequence
+        position; right-padded inputs therefore need a custom metric that
+        selects each prompt's last non-padding position.
         """
         if method not in {"none", "signflip"}:
             raise ValueError("method must be 'none' or 'signflip'.")
@@ -755,7 +782,9 @@ class PatchingAuditor:
             (per_prompt.abs() <= self.zero_effect_tolerance).all(dim=-1)
             & ~exact_zero_mask
         )
-        baseline, scale = compute_robust_baseline(mean_effects.reshape(-1))
+        baseline, scale, outlier_scale_method = _compute_robust_baseline_details(
+            mean_effects.reshape(-1)
+        )
         outlier_scores = (mean_effects - baseline) / scale
 
         calibrated = False
@@ -763,6 +792,8 @@ class PatchingAuditor:
         adjusted_effects = mean_effects - baseline
         p_values = q_values = significant_mask = None
         minimum_attainable_p = None
+        signflip_mode = None
+        signflip_pattern_count = None
 
         if null_distribution is not None:
             if not isinstance(null_distribution, torch.Tensor):
@@ -805,6 +836,7 @@ class PatchingAuditor:
                     if pooled_null else null_description_override
                 )
         elif method == "signflip":
+            permutation_info = signflip_permutation_info(batch_size, self.n_perm)
             p_values = signflip_p_values(
                 per_prompt,
                 n_perm=self.n_perm,
@@ -812,7 +844,9 @@ class PatchingAuditor:
             )
             adjusted_effects = mean_effects
             calibrated = True
-            minimum_attainable_p = signflip_minimum_p(batch_size, self.n_perm)
+            minimum_attainable_p = permutation_info["minimum_p"]
+            signflip_mode = permutation_info["mode"]
+            signflip_pattern_count = permutation_info["n_patterns"]
             null_description = (
                 "sign-flip over prompts (requires independent prompt effects, each "
                 "symmetric about zero; "
@@ -846,11 +880,16 @@ class PatchingAuditor:
             else "position" if self._hook_cfg["has_position_dim"]
             else "component"
         )
+        resolved_hook_names = tuple(
+            _build_hook_name(layer, self._hook_cfg["hook_suffix"])
+            for layer in range(n_layers)
+        )
         records = []
         for layer in range(n_layers):
             for component in range(n_components):
                 row = {
                     "layer": layer,
+                    "hook_name": resolved_hook_names[layer],
                     component_label: component,
                     "raw_effect": raw_effects[layer, component].item(),
                     "adjusted_effect": adjusted_effects[layer, component].item(),
@@ -893,12 +932,17 @@ class PatchingAuditor:
             exact_zero_components=int(exact_zero_mask.sum().item()),
             numerically_zero_components=int(numerical_zero_mask.sum().item()),
             null_metadata=null_metadata,
+            resolved_hook_names=resolved_hook_names,
+            signflip_mode=signflip_mode,
+            signflip_pattern_count=signflip_pattern_count,
+            outlier_scale_method=outlier_scale_method,
             methods_statement=_format_methods_statement(
                 calibrated=calibrated,
                 null_description=null_description,
                 fdr_method=self.fdr_method if calibrated else None,
                 alpha=self.fdr_threshold if calibrated else None,
                 family_size=family_size,
+                outlier_scale_method=outlier_scale_method,
             ),
         )
 

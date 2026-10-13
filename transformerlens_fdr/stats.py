@@ -36,8 +36,16 @@ def compute_robust_baseline(
 
     This is a robust descriptive heuristic. It is not a Gaussian null, does
     not produce inferential p-values, and assumes signals are sparse relative
-    to the full set of effects.
+    to the full set of effects. If the scaled MAD is at most ``epsilon``, the
+    population standard deviation is used as a less-robust fallback; a flat
+    map's scale is then floored at ``epsilon``.
     """
+    median, scale, _ = _compute_robust_baseline_details(effects, epsilon)
+    return median, scale
+
+
+def _compute_robust_baseline_details(effects, epsilon=1e-8):
+    """Internal baseline calculation with a reportable scale-method label."""
     if effects.numel() < 2:
         raise ValueError("Insufficient components to estimate baseline variance. Need at least 2.")
         
@@ -49,13 +57,17 @@ def compute_robust_baseline(
     if not torch.isfinite(sigma):
         raise ValueError("Robust baseline scale must be finite.")
 
+    scale_method = "scaled MAD"
     # Sparse maps often have MAD=0 even when a few components are nonzero.
     # In that degenerate case use the map's standard deviation as a finite,
     # explicitly less-robust fallback so a non-flat map is not scored against
     # an artificial epsilon scale.
     if sigma <= epsilon:
         sigma = effects.std(unbiased=False)
-    return median, sigma.clamp_min(epsilon)
+        scale_method = "population standard deviation fallback"
+    if sigma <= epsilon:
+        scale_method += " with epsilon floor"
+    return median, sigma.clamp_min(epsilon), scale_method
 
 def calculate_p_values(
     patching_effects: torch.Tensor,
@@ -205,16 +217,32 @@ def signflip_p_values(
     return p_values.reshape(n_layers, n_components)
 
 
-def signflip_minimum_p(n_prompts: int, n_perm: int, two_sided: bool = True) -> float:
-    """Return the attainable p-value floor for the chosen sign-flip design."""
+def signflip_permutation_info(
+    n_prompts: int, n_perm: int, two_sided: bool = True
+) -> dict:
+    """Describe whether the sign-flip calculation enumerates or samples."""
     if not isinstance(n_prompts, int) or n_prompts < 2:
         raise ValueError("n_prompts must be an integer of at least 2.")
     if not isinstance(n_perm, int) or n_perm < 1:
         raise ValueError("n_perm must be a positive integer.")
     exponent = n_prompts - 1 if two_sided else n_prompts
-    if exponent <= 62 and (1 << exponent) <= n_perm:
-        return 1.0 / (1 << exponent)
-    return 1.0 / (n_perm + 1)
+    pattern_count = (1 << exponent) if exponent <= 62 else None
+    if pattern_count is not None and pattern_count <= n_perm:
+        return {
+            "mode": "exact",
+            "n_patterns": pattern_count,
+            "minimum_p": 1.0 / pattern_count,
+        }
+    return {
+        "mode": "monte_carlo",
+        "n_patterns": n_perm,
+        "minimum_p": 1.0 / (n_perm + 1),
+    }
+
+
+def signflip_minimum_p(n_prompts: int, n_perm: int, two_sided: bool = True) -> float:
+    """Return the attainable p-value floor for the chosen sign-flip design."""
+    return signflip_permutation_info(n_prompts, n_perm, two_sided)["minimum_p"]
 
 def apply_fdr_adjustment(
     p_values: torch.Tensor,

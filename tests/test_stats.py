@@ -6,6 +6,7 @@ from transformerlens_fdr.stats import (
     compute_control_baseline,
     compute_robust_baseline,
     signflip_minimum_p,
+    signflip_permutation_info,
     signflip_p_values,
 )
 from transformerlens_fdr.metrics import circuit_localization_index
@@ -98,6 +99,10 @@ def test_signflip_exact_enumeration_and_resolution_floor():
     expected = (stats.abs() >= observed.abs()).double().mean()
     assert p.item() == expected.item()
     assert signflip_minimum_p(4, 8) == 1 / 8
+    assert signflip_permutation_info(4, 8) == {
+        "mode": "exact", "n_patterns": 8, "minimum_p": 1 / 8
+    }
+    assert signflip_permutation_info(5, 8)["mode"] == "monte_carlo"
 
 
 def test_fdr_by_adjustment():

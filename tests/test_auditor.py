@@ -50,6 +50,14 @@ def test_attn_head_audit(tiny_model, base_tokens):
     assert not results.calibrated
     assert 0 <= results.cli_score <= 1.0
     assert results.hook_type == "attn_head"
+    assert len(results.resolved_hook_names) == tiny_model.cfg.n_layers
+    assert results.resolved_hook_names[0] == "blocks.0.attn.hook_z"
+    assert results.outlier_scale_method in {
+        "scaled MAD",
+        "population standard deviation fallback",
+        "population standard deviation fallback with epsilon floor",
+    }
+    assert results.outlier_scale_method in results.methods_statement
 
 
 # -------------------------------------------------------------------
@@ -68,6 +76,9 @@ def test_backward_compat_alias(tiny_model, base_tokens):
     assert results.calibrated
     assert results.p_values.shape == results.raw_patching_effects.shape
     assert 0 <= results.cli_score <= 1.0
+    assert results.signflip_mode == "exact"
+    assert results.signflip_pattern_count == 2
+    assert "exact enumeration" in results.format_summary()
 
 
 # -------------------------------------------------------------------
@@ -118,6 +129,8 @@ def test_resid_mid_is_position_specific(tiny_model, base_tokens):
     assert results.per_prompt_effects.shape == (
         tiny_model.cfg.n_layers, base_tokens["clean_tokens"].shape[1], 2
     )
+    assert results.resolved_hook_names == ("blocks.0.hook_mlp_in",)
+    assert set(results.summary_df["hook_name"]) == {"blocks.0.hook_mlp_in"}
 
 
 # -------------------------------------------------------------------

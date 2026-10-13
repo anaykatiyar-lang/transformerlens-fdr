@@ -8,7 +8,9 @@ def logit_difference(
     """
     Computes per-prompt logit difference [B]: logit(correct) - logit(incorrect).
     Logits may have shape [B, S, V] or [B, V]; for [B, S, V], the final
-    sequence position is used.
+    sequence position is used. With right-padded inputs, this position may be
+    padding rather than the prompt's final token; use a custom metric that
+    indexes each prompt's last non-padding position in that case.
     """
     if logits.ndim == 3:
         logits = logits[:, -1, :]
