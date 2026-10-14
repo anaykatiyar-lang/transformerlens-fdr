@@ -2,6 +2,7 @@
 
 import warnings
 import math
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, List
 
@@ -342,13 +343,49 @@ class PatchingAuditor:
         self.zero_effect_tolerance = float(zero_effect_tolerance)
         self.head_batch_size = head_batch_size
         self._hook_cfg = dict(HOOK_CONFIGS[hook_type])
+        self._needs_mlp_in_flag = False
+        self._original_mlp_in_flag = None
         if hook_type == "resid_mid" and callable(
             getattr(model, "set_use_hook_mlp_in", None)
         ):
             # TransformerLens 4 exposes the legacy mid-residual location as
             # hook_mlp_in (the MLP branch entry), behind an opt-in hook flag.
-            model.set_use_hook_mlp_in(True)
+            self._original_mlp_in_flag = getattr(
+                getattr(model, "cfg", None), "use_hook_mlp_in", False
+            )
+            self._needs_mlp_in_flag = True
             self._hook_cfg["hook_suffix"] = "hook_mlp_in"
+
+    @contextmanager
+    def _model_hook_context(self):
+        """Enable optional hooks for one call and restore the caller's setting."""
+        if not self._needs_mlp_in_flag:
+            yield
+            return
+        self.model.set_use_hook_mlp_in(True)
+        try:
+            yield
+        finally:
+            self.model.set_use_hook_mlp_in(self._original_mlp_in_flag)
+
+    def _run_with_filtered_cache(self, tokens):
+        names = [
+            _build_hook_name(layer, self._hook_cfg["hook_suffix"])
+            for layer in range(self.model.cfg.n_layers)
+        ]
+        with self._model_hook_context():
+            try:
+                return self.model.run_with_cache(tokens, names_filter=names)
+            except TypeError as error:
+                # Keep compatibility with lightweight/custom model wrappers
+                # whose run_with_cache predates TransformerLens names_filter.
+                if "names_filter" not in str(error):
+                    raise
+                return self.model.run_with_cache(tokens)
+
+    def _run_with_hooks(self, tokens, **kwargs):
+        with self._model_hook_context():
+            return self.model.run_with_hooks(tokens, **kwargs)
 
     def _get_audit_shape(self, seq_len: int) -> tuple:
         n_layers = self.model.cfg.n_layers
@@ -610,7 +647,7 @@ class PatchingAuditor:
                     activations[start:end, :, head, :] = clean_act[:, :, head, :]
                 return activations
 
-            logits = self.model.run_with_hooks(
+            logits = self._run_with_hooks(
                 batched_tokens,
                 return_type="logits",
                 fwd_hooks=[(hook_name, batched_patch_hook)],
@@ -645,7 +682,7 @@ class PatchingAuditor:
             )
             for position in range(component_count):
                 hook_name, hook_fn = self._patch_position(clean_cache, layer, position)
-                logits = self.model.run_with_hooks(
+                logits = self._run_with_hooks(
                     corrupted_tokens,
                     return_type="logits",
                     fwd_hooks=[(hook_name, hook_fn)],
@@ -657,7 +694,7 @@ class PatchingAuditor:
             return effects
 
         hook_name, hook_fn = self._patch_whole_component(clean_cache, layer)
-        logits = self.model.run_with_hooks(
+        logits = self._run_with_hooks(
             corrupted_tokens,
             return_type="logits",
             fwd_hooks=[(hook_name, hook_fn)],
@@ -746,7 +783,7 @@ class PatchingAuditor:
             if not torch.isfinite(null_distribution).all():
                 raise ValueError("null_distribution must contain only finite values.")
 
-        clean_logits, clean_cache = self.model.run_with_cache(clean_tokens)
+        clean_logits, clean_cache = self._run_with_filtered_cache(clean_tokens)
         corrupted_logits = self.model(corrupted_tokens)
         clean_metric = self._metric_per_prompt(
             clean_logits, correct_tokens, incorrect_tokens, batch_size
@@ -973,7 +1010,7 @@ class PatchingAuditor:
             raise TypeError("patching_mask must use torch.bool dtype.")
         if tuple(patching_mask.shape) != (n_layers, n_components):
             raise ValueError(f"patching_mask must have shape [{n_layers}, {n_components}].")
-        clean_logits, clean_cache = self.model.run_with_cache(clean_tokens)
+        clean_logits, clean_cache = self._run_with_filtered_cache(clean_tokens)
         corrupted_logits = self.model(corrupted_tokens)
         batch_size = corrupted_tokens.shape[0]
         clean_metric = self._metric_per_prompt(
@@ -1016,7 +1053,7 @@ class PatchingAuditor:
                     return hook_fn
                 fwd_hooks.append((hook_name, make_component_hook()))
 
-        patched_logits = self.model.run_with_hooks(
+        patched_logits = self._run_with_hooks(
             corrupted_tokens, return_type="logits", fwd_hooks=fwd_hooks
         )
         patched_metric = self._metric_per_prompt(

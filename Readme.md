@@ -170,7 +170,7 @@ Returned by the auditor. Contains:
 - `p_values` / `q_values`: Optional tensors, present only when a null method was requested.
 - `significant_mask`: Optional boolean mask, present only when p-values were produced.
 - `outlier_scores`: Robust descriptive scores; not p-values.
-- `outlier_scale_method`: The scale used for these scores (`scaled MAD`, or population standard deviation when the MAD is degenerate; flat maps use an epsilon floor).
+- `outlier_scale_method`: The scale used for descriptive scores. The scaled MAD has a 10% population-standard-deviation floor; degenerate MAD uses the full population standard deviation, and flat maps use an epsilon floor. These scores are not inferential.
 - `calibrated` / `null_description`: State whether inference was attempted and which null assumption was used.
 - `family_size` / `resolution_report`: Number of components in the declared correction family; the rank report is present when calibrated p-values were adjusted.
 - `clean_corrupted_gap_mean` / `clean_corrupted_gap_std`: Mean clean-to-corrupted metric gap and its prompt spread; spread is omitted for one prompt.
@@ -287,13 +287,13 @@ pip install transformerlens-fdr
 ### Option 2: Install Directly from GitHub
 Anyone can install this directly into their environment without needing to clone the repo:
 ```bash
-pip install git+https://github.com/anaykatiyar-lang/transformerlens_fdr.git
+pip install git+https://github.com/anaykatiyar-lang/transformerlens-fdr.git
 ```
 
 ### Option 3: Clone for Local Development
 If you want to edit the code or run the tutorials:
 ```bash
-git clone https://github.com/anaykatiyar-lang/transformerlens_fdr.git
+git clone https://github.com/anaykatiyar-lang/transformerlens-fdr.git
 cd transformerlens-fdr
 
 # Install editable with tests

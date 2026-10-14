@@ -117,6 +117,7 @@ def test_per_component_empirical_null_path(tiny_model, base_tokens):
 
 
 def test_resid_mid_is_position_specific(tiny_model, base_tokens):
+    original_mlp_in_flag = getattr(tiny_model.cfg, "use_hook_mlp_in", False)
     auditor = PatchingAuditor(
         tiny_model,
         metric_fn=_make_mock_metric(),
@@ -131,6 +132,7 @@ def test_resid_mid_is_position_specific(tiny_model, base_tokens):
     )
     assert results.resolved_hook_names == ("blocks.0.hook_mlp_in",)
     assert set(results.summary_df["hook_name"]) == {"blocks.0.hook_mlp_in"}
+    assert getattr(tiny_model.cfg, "use_hook_mlp_in", False) == original_mlp_in_flag
 
 
 # -------------------------------------------------------------------

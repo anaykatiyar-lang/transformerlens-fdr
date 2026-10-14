@@ -36,9 +36,10 @@ def compute_robust_baseline(
 
     This is a robust descriptive heuristic. It is not a Gaussian null, does
     not produce inferential p-values, and assumes signals are sparse relative
-    to the full set of effects. If the scaled MAD is at most ``epsilon``, the
-    population standard deviation is used as a less-robust fallback; a flat
-    map's scale is then floored at ``epsilon``.
+    to the full set of effects. A floor of 10% of the population standard
+    deviation stabilizes near-degenerate MAD estimates; if MAD is at most
+    ``epsilon``, the full population standard deviation is used. A flat map's
+    scale is floored at ``epsilon``. This remains descriptive only.
     """
     median, scale, _ = _compute_robust_baseline_details(effects, epsilon)
     return median, scale
@@ -58,6 +59,14 @@ def _compute_robust_baseline_details(effects, epsilon=1e-8):
         raise ValueError("Robust baseline scale must be finite.")
 
     scale_method = "scaled MAD"
+    # A small standard-deviation contribution prevents near-degenerate MAD
+    # estimates from producing arbitrarily large descriptive scores. This
+    # remains a robust heuristic, not an inferential scale estimate.
+    population_std = effects.std(unbiased=False)
+    relative_floor = 0.1 * population_std
+    if relative_floor > sigma:
+        sigma = relative_floor
+        scale_method = "scaled MAD with 0.1 population-standard-deviation floor"
     # Sparse maps often have MAD=0 even when a few components are nonzero.
     # In that degenerate case use the map's standard deviation as a finite,
     # explicitly less-robust fallback so a non-flat map is not scored against
@@ -202,7 +211,16 @@ def signflip_p_values(
                 0, 2, (count, n_prompts), generator=generator,
                 device=generator_device,
             ).mul_(2).sub_(1).to(device=effects.device, dtype=result_dtype)
-        null_stats = studentized(signs[:, None, :] * x[None, :, :])
+        # Sign patterns preserve sum(x**2), so calculate studentized means
+        # from the matrix product rather than allocating [permutations, tests,
+        # prompts]. This keeps memory proportional to [permutations, tests].
+        signed_sums = signs @ x.T
+        sum_squares = (x * x).sum(dim=-1)
+        variance_numerator = (n_prompts * sum_squares.unsqueeze(0) - signed_sums.square()).clamp_min(0)
+        denominator = variance_numerator.sqrt().clamp_min(
+            1e-12 * math.sqrt(n_prompts * (n_prompts - 1))
+        )
+        null_stats = signed_sums * math.sqrt(n_prompts - 1) / denominator
         if two_sided:
             exceedances += (
                 null_stats.abs() >= observed.abs() - tie_tolerance
@@ -269,11 +287,24 @@ def apply_fdr_adjustment(
     if method not in {"fdr_bh", "fdr_by"}:
         raise ValueError("method must be 'fdr_bh' or 'fdr_by'.")
 
-    # statsmodels makes boundary decisions in the input dtype; always do the
-    # sorting and threshold arithmetic in float64 to avoid float32 tie errors.
-    p_np = p_values.detach().to(torch.float64).cpu().numpy().flatten()
-    
-    reject, pvals_corrected, _, _ = multipletests(p_np, alpha=alpha, method=method)
+    # Move to CPU before float64 conversion (MPS has no float64 support).
+    p_np = p_values.detach().cpu().to(torch.float64).numpy().flatten()
+
+    _, pvals_corrected, _, _ = multipletests(p_np, alpha=alpha, method=method)
+    order = p_np.argsort(kind="mergesort")
+    sorted_p = p_np[order]
+    n_tests = len(p_np)
+    dependence_factor = (
+        1.0 if method == "fdr_bh"
+        else sum(1.0 / rank for rank in range(1, n_tests + 1))
+    )
+    thresholds = alpha * (torch.arange(1, n_tests + 1, dtype=torch.float64).numpy()) / (n_tests * dependence_factor)
+    # Equality is part of the step-up rule. The tiny relative allowance only
+    # absorbs floating-point evaluation error at a mathematically exact tie.
+    passing = sorted_p <= thresholds * (1.0 + 1e-12)
+    reject = torch.zeros(n_tests, dtype=torch.bool).numpy()
+    if passing.any():
+        reject[order[:int(passing.nonzero()[0][-1]) + 1]] = True
     
     q_dtype = torch.float32 if p_values.device.type == "mps" else torch.float64
     q_values = torch.tensor(pvals_corrected, dtype=q_dtype, device=p_values.device).reshape(p_values.shape)

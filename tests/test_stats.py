@@ -76,11 +76,27 @@ def test_fdr_boundary_uses_float64_threshold_arithmetic():
     assert not rejected.any()
 
 
+def test_fdr_exact_bh_boundary_tie_is_rejected():
+    # At rank 7, the BH threshold is 7 * .05 / 10 == .035.
+    p = torch.tensor([0.035] * 7 + [0.5, 0.8, 1.0], dtype=torch.float64)
+    _, rejected = apply_fdr_adjustment(p, alpha=0.05, method="fdr_bh")
+    assert rejected[:7].all()
+    assert not rejected[7:].any()
+
+
 def test_sparse_nonflat_map_does_not_use_epsilon_as_robust_scale():
     effects = torch.tensor([0.0] * 20 + [1.0, -1.0])
     median, scale = compute_robust_baseline(effects)
     assert median == 0
     assert scale > 0.1
+
+
+def test_near_degenerate_mad_uses_relative_scale_floor():
+    effects = torch.tensor([0.0] * 100 + [1e-6, -1e-6])
+    median, scale = compute_robust_baseline(effects)
+    expected_floor = 0.1 * effects.std(unbiased=False)
+    assert median == 0
+    assert scale >= expected_floor
 
 
 def test_signflip_exact_enumeration_and_resolution_floor():
@@ -103,6 +119,26 @@ def test_signflip_exact_enumeration_and_resolution_floor():
         "mode": "exact", "n_patterns": 8, "minimum_p": 1 / 8
     }
     assert signflip_permutation_info(5, 8)["mode"] == "monte_carlo"
+
+
+def test_signflip_matrix_statistics_match_brute_force_for_multiple_components():
+    effects = torch.tensor(
+        [[[0.3, -0.8, 1.2, 0.5], [1.0, 1.1, -0.7, 0.2]]],
+        dtype=torch.float64,
+    )
+    observed = signflip_p_values(effects, n_perm=8)
+    signs = torch.tensor(
+        [[1, -1, -1, -1], [1, 1, -1, -1], [1, -1, 1, -1], [1, 1, 1, -1],
+         [1, -1, -1, 1], [1, 1, -1, 1], [1, -1, 1, 1], [1, 1, 1, 1]],
+        dtype=torch.float64,
+    )
+    expected = []
+    for component in effects[0]:
+        null = signs * component
+        null_t = null.mean(-1) / (null.std(-1, unbiased=True) / 2)
+        obs_t = component.mean() / (component.std(unbiased=True) / 2)
+        expected.append((null_t.abs() >= obs_t.abs()).double().mean())
+    assert torch.allclose(observed[0], torch.stack(expected), atol=1e-12, rtol=0)
 
 
 def test_fdr_by_adjustment():
