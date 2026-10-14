@@ -90,17 +90,24 @@ def test_cfg_and_forward_contract(bridge, data):
 def test_hook_names_resolve_and_have_expected_shapes(bridge, data, hook_type):
     cfg = HOOK_CONFIGS[hook_type]
     name = f"blocks.0.{cfg['hook_suffix']}"
-    assert name in bridge.hook_dict, f"{name} not registered on the bridge"
-    canonical = bridge.hook_dict[name].name
-    _, cache = bridge.run_with_cache(data[0])
-    assert canonical in cache, "hooks see hook.name (canonical); it must be in the cache"
-    act = cache[canonical]
-    B, S = data[0].shape
-    if cfg["has_head_dim"]:
-        assert act.shape[:3] == (B, S, bridge.cfg.n_heads)
-    else:
-        assert act.shape[:2] == (B, S) and act.dim() == 3
-    print(f"[diagnostic] {name} -> {canonical} {tuple(act.shape)}")
+    original_flag = getattr(bridge.cfg, "use_hook_mlp_in", False)
+    if hook_type == "mlp_in":
+        bridge.set_use_hook_mlp_in(True)
+    try:
+        assert name in bridge.hook_dict, f"{name} not registered on the bridge"
+        canonical = bridge.hook_dict[name].name
+        _, cache = bridge.run_with_cache(data[0], names_filter=[name])
+        assert canonical in cache, "hooks see hook.name (canonical); it must be in the cache"
+        act = cache[canonical]
+        B, S = data[0].shape
+        if cfg["has_head_dim"]:
+            assert act.shape[:3] == (B, S, bridge.cfg.n_heads)
+        else:
+            assert act.shape[:2] == (B, S) and act.dim() == 3
+        print(f"[diagnostic] {name} -> {canonical} {tuple(act.shape)}")
+    finally:
+        if hook_type == "mlp_in":
+            bridge.set_use_hook_mlp_in(original_flag)
 
 
 def test_batched_path_matches_bruteforce_on_real_hooks(bridge, data):

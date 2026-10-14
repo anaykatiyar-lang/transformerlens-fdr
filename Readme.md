@@ -106,7 +106,8 @@ This updates the q-values and significance masks on both results. Separate calls
 | --- | --- | --- |
 | `attn_head` (default) | One attention head's `attn.hook_z` output at a time | Head-specific sufficiency effects. |
 | `mlp_out` | The whole MLP output at each layer | A layer-level effect, not an individual-neuron score. Architectures with a post-MLP normalization or other intervening operation may interpret this hook differently; inspect the model's hook placement and validate it for your architecture. |
-| `resid_mid` | The residual stream at each token position and layer | A whole-stream intervention, not a component-specific attribution. In TransformerLens 4 bridges that expose `set_use_hook_mlp_in`, it resolves to `blocks.{layer}.hook_mlp_in` (the MLP-branch entry); older or other architectures may use a different hook. These locations may not be numerically comparable. Effects near 1 can occur because this restores a broad activation and does not identify individual heads or neurons. |
+| `resid_mid` | The whole residual stream after attention and before the MLP, when the model exposes that hook | Requires `hook_resid_mid` at every layer. If unavailable, the audit stops rather than silently substituting an MLP-branch intervention. |
+| `mlp_in` | The activation entering the MLP branch at each token position and layer | A distinct intervention from the whole mid-residual stream. Some TransformerLens 4 bridges enable it through `set_use_hook_mlp_in`; the original model setting is restored after each call. |
 
 These are activation-patching locations, not claims that all architectures implement the same computation at each location. The tests exercise native TransformerLens 4 bridges and a cached GPT-2 integration path; that is not validation of every supported architecture or of every hook's scientific interpretation.
 
@@ -170,7 +171,7 @@ Returned by the auditor. Contains:
 - `p_values` / `q_values`: Optional tensors, present only when a null method was requested.
 - `significant_mask`: Optional boolean mask, present only when p-values were produced.
 - `outlier_scores`: Robust descriptive scores; not p-values.
-- `outlier_scale_method`: The scale used for descriptive scores. The scaled MAD has a 10% population-standard-deviation floor; degenerate MAD uses the full population standard deviation, and flat maps use an epsilon floor. These scores are not inferential.
+- `outlier_scale_method`: The scale used for descriptive scores. The scaled MAD has a 10% population-standard-deviation floor; flat maps use an epsilon floor. These scores are not inferential.
 - `calibrated` / `null_description`: State whether inference was attempted and which null assumption was used.
 - `family_size` / `resolution_report`: Number of components in the declared correction family; the rank report is present when calibrated p-values were adjusted.
 - `clean_corrupted_gap_mean` / `clean_corrupted_gap_std`: Mean clean-to-corrupted metric gap and its prompt spread; spread is omitted for one prompt.

@@ -2,6 +2,7 @@
 
 import warnings
 import math
+import inspect
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, List
@@ -39,6 +40,12 @@ HOOK_CONFIGS = {
         "has_head_dim": False,
         "has_position_dim": True,
         "description": "Position-specific mid-layer residual stream",
+    },
+    "mlp_in": {
+        "hook_suffix": "hook_mlp_in",
+        "has_head_dim": False,
+        "has_position_dim": True,
+        "description": "Position-specific MLP-branch input",
     },
 }
 
@@ -345,16 +352,35 @@ class PatchingAuditor:
         self._hook_cfg = dict(HOOK_CONFIGS[hook_type])
         self._needs_mlp_in_flag = False
         self._original_mlp_in_flag = None
-        if hook_type == "resid_mid" and callable(
+        hook_dict = getattr(model, "hook_dict", None)
+        if hook_type in {"resid_mid", "mlp_in"} and isinstance(hook_dict, dict):
+            requested_name = self._hook_cfg["hook_suffix"]
+            available = all(
+                _build_hook_name(layer, requested_name) in hook_dict
+                for layer in range(model.cfg.n_layers)
+            )
+            if not available and hook_type == "resid_mid":
+                raise ValueError(
+                    "hook_type='resid_mid' requires a whole residual-mid hook "
+                    "at every layer. This model does not expose one; use "
+                    "hook_type='mlp_in' to audit the MLP-branch input explicitly."
+                )
+            if not available and hook_type == "mlp_in" and not callable(
+                getattr(model, "set_use_hook_mlp_in", None)
+            ):
+                raise ValueError("This model does not expose hook_mlp_in at every layer.")
+        if hook_type == "mlp_in" and callable(
             getattr(model, "set_use_hook_mlp_in", None)
         ):
-            # TransformerLens 4 exposes the legacy mid-residual location as
-            # hook_mlp_in (the MLP branch entry), behind an opt-in hook flag.
             self._original_mlp_in_flag = getattr(
                 getattr(model, "cfg", None), "use_hook_mlp_in", False
             )
             self._needs_mlp_in_flag = True
-            self._hook_cfg["hook_suffix"] = "hook_mlp_in"
+        elif hook_type == "mlp_in" and not isinstance(hook_dict, dict):
+            raise ValueError(
+                "hook_type='mlp_in' requires a model exposing hook_mlp_in or "
+                "set_use_hook_mlp_in()."
+            )
 
     @contextmanager
     def _model_hook_context(self):
@@ -375,13 +401,19 @@ class PatchingAuditor:
         ]
         with self._model_hook_context():
             try:
+                parameters = inspect.signature(self.model.run_with_cache).parameters
+            except (TypeError, ValueError):
+                # TransformerLens' documented API accepts names_filter even
+                # when a wrapped/C-level callable hides its signature.
+                supports_filter = True
+            else:
+                supports_filter = "names_filter" in parameters or any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in parameters.values()
+                )
+            if supports_filter:
                 return self.model.run_with_cache(tokens, names_filter=names)
-            except TypeError as error:
-                # Keep compatibility with lightweight/custom model wrappers
-                # whose run_with_cache predates TransformerLens names_filter.
-                if "names_filter" not in str(error):
-                    raise
-                return self.model.run_with_cache(tokens)
+            return self.model.run_with_cache(tokens)
 
     def _run_with_hooks(self, tokens, **kwargs):
         with self._model_hook_context():

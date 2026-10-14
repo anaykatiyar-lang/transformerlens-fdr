@@ -1,5 +1,6 @@
 import torch
 import pytest
+from types import SimpleNamespace
 from transformer_lens import TransformerBridge
 from transformerlens_fdr.auditor import PatchingAuditor
 from transformerlens_fdr.metrics import logit_difference
@@ -54,10 +55,33 @@ def test_attn_head_audit(tiny_model, base_tokens):
     assert results.resolved_hook_names[0] == "blocks.0.attn.hook_z"
     assert results.outlier_scale_method in {
         "scaled MAD",
-        "population standard deviation fallback",
-        "population standard deviation fallback with epsilon floor",
+        "scaled MAD with 0.1 population-standard-deviation floor",
+        "scaled MAD with 0.1 population-standard-deviation floor with epsilon floor",
+        "scaled MAD with epsilon floor",
     }
     assert results.outlier_scale_method in results.methods_statement
+
+
+def test_head_batching_handles_non_divisible_batch_size(tiny_model, base_tokens, monkeypatch):
+    n_heads = tiny_model.cfg.n_heads
+    batch_size = max(1, n_heads - 1)
+    calls = []
+    original = tiny_model.run_with_hooks
+
+    def counted_run_with_hooks(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tiny_model, "run_with_hooks", counted_run_with_hooks)
+    auditor = PatchingAuditor(
+        tiny_model,
+        metric_fn=_make_mock_metric(),
+        hook_type="attn_head",
+        head_batch_size=batch_size,
+    )
+    results = auditor.run_patching_audit(**base_tokens)
+    assert results.raw_patching_effects.shape == (tiny_model.cfg.n_layers, n_heads)
+    assert len(calls) == (n_heads + batch_size - 1) // batch_size
 
 
 # -------------------------------------------------------------------
@@ -116,12 +140,12 @@ def test_per_component_empirical_null_path(tiny_model, base_tokens):
     assert torch.isfinite(results.p_values).all()
 
 
-def test_resid_mid_is_position_specific(tiny_model, base_tokens):
+def test_mlp_in_is_position_specific_and_restores_model_flag(tiny_model, base_tokens):
     original_mlp_in_flag = getattr(tiny_model.cfg, "use_hook_mlp_in", False)
     auditor = PatchingAuditor(
         tiny_model,
         metric_fn=_make_mock_metric(),
-        hook_type="resid_mid",
+        hook_type="mlp_in",
     )
     results = auditor.run_patching_audit(**base_tokens)
     assert results.raw_patching_effects.shape == (
@@ -133,6 +157,54 @@ def test_resid_mid_is_position_specific(tiny_model, base_tokens):
     assert results.resolved_hook_names == ("blocks.0.hook_mlp_in",)
     assert set(results.summary_df["hook_name"]) == {"blocks.0.hook_mlp_in"}
     assert getattr(tiny_model.cfg, "use_hook_mlp_in", False) == original_mlp_in_flag
+
+
+def test_resid_mid_prefers_whole_stream_hook_when_available():
+    model = SimpleNamespace(
+        cfg=SimpleNamespace(n_layers=1),
+        hook_dict={"blocks.0.hook_resid_mid": object()},
+        set_use_hook_mlp_in=lambda enabled: None,
+    )
+    auditor = PatchingAuditor(model, metric_fn=_make_mock_metric(), hook_type="resid_mid")
+    assert auditor._hook_cfg["hook_suffix"] == "hook_resid_mid"
+    assert not auditor._needs_mlp_in_flag
+
+
+def test_resid_mid_does_not_silently_alias_to_mlp_input():
+    model = SimpleNamespace(
+        cfg=SimpleNamespace(n_layers=1),
+        hook_dict={"blocks.0.hook_mlp_in": object()},
+        set_use_hook_mlp_in=lambda enabled: None,
+    )
+    with pytest.raises(ValueError, match="use hook_type='mlp_in'"):
+        PatchingAuditor(model, metric_fn=_make_mock_metric(), hook_type="resid_mid")
+
+
+def test_cache_filter_uses_supported_signature_and_falls_back_cleanly():
+    class FilteredModel:
+        cfg = SimpleNamespace(n_layers=2)
+
+        def __init__(self):
+            self.names = None
+
+        def run_with_cache(self, tokens, names_filter=None):
+            self.names = names_filter
+            return tokens, {}
+
+    filtered = FilteredModel()
+    auditor = PatchingAuditor(filtered, metric_fn=_make_mock_metric())
+    auditor._run_with_filtered_cache("input")
+    assert filtered.names == ["blocks.0.attn.hook_z", "blocks.1.attn.hook_z"]
+
+    class LegacyModel:
+        cfg = SimpleNamespace(n_layers=1)
+
+        def run_with_cache(self, tokens):
+            return tokens, {}
+
+    legacy = LegacyModel()
+    legacy_auditor = PatchingAuditor(legacy, metric_fn=_make_mock_metric())
+    assert legacy_auditor._run_with_filtered_cache("legacy")[0] == "legacy"
 
 
 # -------------------------------------------------------------------

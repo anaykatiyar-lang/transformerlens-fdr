@@ -5,6 +5,7 @@ from transformerlens_fdr.stats import (
     calculate_p_values,
     compute_control_baseline,
     compute_robust_baseline,
+    _compute_robust_baseline_details,
     signflip_minimum_p,
     signflip_permutation_info,
     signflip_p_values,
@@ -79,24 +80,27 @@ def test_fdr_boundary_uses_float64_threshold_arithmetic():
 def test_fdr_exact_bh_boundary_tie_is_rejected():
     # At rank 7, the BH threshold is 7 * .05 / 10 == .035.
     p = torch.tensor([0.035] * 7 + [0.5, 0.8, 1.0], dtype=torch.float64)
-    _, rejected = apply_fdr_adjustment(p, alpha=0.05, method="fdr_bh")
+    q_values, rejected = apply_fdr_adjustment(p, alpha=0.05, method="fdr_bh")
     assert rejected[:7].all()
     assert not rejected[7:].any()
+    assert torch.equal(q_values <= 0.05, rejected)
 
 
 def test_sparse_nonflat_map_does_not_use_epsilon_as_robust_scale():
     effects = torch.tensor([0.0] * 20 + [1.0, -1.0])
     median, scale = compute_robust_baseline(effects)
-    assert median == 0
-    assert scale > 0.1
+    assert median.abs() < 1e-9
+    assert torch.isclose(scale, 0.1 * effects.std(unbiased=False))
 
 
 def test_near_degenerate_mad_uses_relative_scale_floor():
-    effects = torch.tensor([0.0] * 100 + [1e-6, -1e-6])
-    median, scale = compute_robust_baseline(effects)
+    central_values = torch.linspace(-1e-7, 1e-7, 1000)
+    effects = torch.cat([central_values, torch.full((10,), 1e-3), torch.full((10,), -1e-3)])
+    median, scale, method = _compute_robust_baseline_details(effects)
     expected_floor = 0.1 * effects.std(unbiased=False)
-    assert median == 0
-    assert scale >= expected_floor
+    assert median.abs() < 1e-9
+    assert scale == expected_floor
+    assert method == "scaled MAD with 0.1 population-standard-deviation floor"
 
 
 def test_signflip_exact_enumeration_and_resolution_floor():
@@ -139,6 +143,13 @@ def test_signflip_matrix_statistics_match_brute_force_for_multiple_components():
         obs_t = component.mean() / (component.std(unbiased=True) / 2)
         expected.append((null_t.abs() >= obs_t.abs()).double().mean())
     assert torch.allclose(observed[0], torch.stack(expected), atol=1e-12, rtol=0)
+
+
+def test_exact_signflip_near_constant_effects_keep_positive_resolution_floor():
+    generator = torch.Generator().manual_seed(20261014)
+    effects = 1.0 + 0.01 * torch.randn((1, 200, 10), generator=generator, dtype=torch.float64)
+    p_values = signflip_p_values(effects, n_perm=9999)
+    assert (p_values >= 1 / 512).all()
 
 
 def test_fdr_by_adjustment():

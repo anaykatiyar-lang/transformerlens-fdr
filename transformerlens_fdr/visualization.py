@@ -21,6 +21,7 @@ def plot_fdr_heatmap(results: AuditResults, title: str = "Activation Patching (F
     x_label = {
         "attn_head": "Head",
         "resid_mid": "Position",
+        "mlp_in": "Position",
         "mlp_out": "Component",
     }.get(results.hook_type, "Component")
     fig = px.imshow(

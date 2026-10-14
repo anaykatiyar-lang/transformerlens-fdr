@@ -157,13 +157,13 @@ After the full audit, `print(results.format_summary())` gives a short, copyable 
 | `per_prompt_effects` | How effects vary across prompts |
 | `p_values` / `q_values` | Unadjusted / multiple-testing-adjusted values, when inference ran |
 | `significant_mask` | Components passing the selected FDR threshold |
-| `outlier_scores` | Descriptive ranking; not significance tests. Uses scaled MAD with a 10% population-standard-deviation floor, full standard deviation when MAD is degenerate, and an epsilon floor for a flat map. |
+| `outlier_scores` | Descriptive ranking; not significance tests. Uses scaled MAD with a 10% population-standard-deviation floor and an epsilon floor for a flat map. |
 | `cli_score` | Whether absolute effects are concentrated in a few components; not significance or causality |
 | `clean_corrupted_gap_mean` / `clean_corrupted_gap_std` | Mean clean-to-corrupted metric gap and its prompt-to-prompt spread; the spread is omitted for one prompt |
 | `exact_zero_components` / `numerically_zero_components` | Components whose per-prompt effects are exactly zero or all within the configured sign-flip zero tolerance |
 | `family_size` / `resolution_report` | Number of hypotheses corrected and the attainable p-value/rank information |
 | `signflip_mode` / `signflip_pattern_count` | Whether the audit used exact sign-pattern enumeration or Monte Carlo sampling, and how many patterns it evaluated |
-| `resolved_hook_names` | The actual per-layer hook names used, including the TransformerLens 4 `resid_mid` mapping |
+| `resolved_hook_names` | The actual per-layer hook names used. `resid_mid` requires a true whole-stream hook; use `mlp_in` for the separate MLP-branch input intervention. |
 | `outlier_scale_method` | The descriptive scale method used for outlier scores; also included in the methods statement |
 | `methods_statement` | Plain-language summary of the correction and null assumptions |
 

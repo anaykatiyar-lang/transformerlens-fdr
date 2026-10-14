@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from statsmodels.stats.multitest import multipletests
 from typing import Tuple
@@ -36,10 +37,9 @@ def compute_robust_baseline(
 
     This is a robust descriptive heuristic. It is not a Gaussian null, does
     not produce inferential p-values, and assumes signals are sparse relative
-    to the full set of effects. A floor of 10% of the population standard
-    deviation stabilizes near-degenerate MAD estimates; if MAD is at most
-    ``epsilon``, the full population standard deviation is used. A flat map's
-    scale is floored at ``epsilon``. This remains descriptive only.
+    to the full set of effects. The scaled MAD is floored at 10% of the
+    population standard deviation; a flat map's scale is floored at
+    ``epsilon``. This remains descriptive only.
     """
     median, scale, _ = _compute_robust_baseline_details(effects, epsilon)
     return median, scale
@@ -59,21 +59,10 @@ def _compute_robust_baseline_details(effects, epsilon=1e-8):
         raise ValueError("Robust baseline scale must be finite.")
 
     scale_method = "scaled MAD"
-    # A small standard-deviation contribution prevents near-degenerate MAD
-    # estimates from producing arbitrarily large descriptive scores. This
-    # remains a robust heuristic, not an inferential scale estimate.
-    population_std = effects.std(unbiased=False)
-    relative_floor = 0.1 * population_std
+    relative_floor = 0.1 * effects.std(unbiased=False)
     if relative_floor > sigma:
         sigma = relative_floor
         scale_method = "scaled MAD with 0.1 population-standard-deviation floor"
-    # Sparse maps often have MAD=0 even when a few components are nonzero.
-    # In that degenerate case use the map's standard deviation as a finite,
-    # explicitly less-robust fallback so a non-flat map is not scored against
-    # an artificial epsilon scale.
-    if sigma <= epsilon:
-        sigma = effects.std(unbiased=False)
-        scale_method = "population standard deviation fallback"
     if sigma <= epsilon:
         scale_method += " with epsilon floor"
     return median, sigma.clamp_min(epsilon), scale_method
@@ -196,7 +185,9 @@ def signflip_p_values(
     chunk_size = min(256, total)
     generator_device = generator.device if generator is not None else effects.device
     tie_tolerance = (
-        16 * torch.finfo(result_dtype).eps * observed.abs().clamp_min(1.0)
+        16 * torch.finfo(result_dtype).eps
+        * observed.abs().clamp_min(1.0)
+        * (1.0 + observed.square() / (n_prompts - 1))
     )
     for start in range(0, total, chunk_size):
         count = min(chunk_size, total - start)
@@ -221,6 +212,11 @@ def signflip_p_values(
             1e-12 * math.sqrt(n_prompts * (n_prompts - 1))
         )
         null_stats = signed_sums * math.sqrt(n_prompts - 1) / denominator
+        if exact and start <= total - 1 < start + count:
+            # The all-positive pattern is the observed data. Set it to the
+            # separately computed observed statistic so cancellation in the
+            # variance identity cannot lose this guaranteed exceedance.
+            null_stats[total - 1 - start] = observed
         if two_sided:
             exceedances += (
                 null_stats.abs() >= observed.abs() - tie_tolerance
@@ -298,13 +294,16 @@ def apply_fdr_adjustment(
         1.0 if method == "fdr_bh"
         else sum(1.0 / rank for rank in range(1, n_tests + 1))
     )
-    thresholds = alpha * (torch.arange(1, n_tests + 1, dtype=torch.float64).numpy()) / (n_tests * dependence_factor)
+    thresholds = alpha * np.arange(1, n_tests + 1, dtype=np.float64) / (n_tests * dependence_factor)
     # Equality is part of the step-up rule. The tiny relative allowance only
     # absorbs floating-point evaluation error at a mathematically exact tie.
     passing = sorted_p <= thresholds * (1.0 + 1e-12)
-    reject = torch.zeros(n_tests, dtype=torch.bool).numpy()
+    reject = np.zeros(n_tests, dtype=bool)
     if passing.any():
         reject[order[:int(passing.nonzero()[0][-1]) + 1]] = True
+    # Keep the adjusted-value and rejection-mask interfaces consistent at a
+    # floating-point boundary accepted by the tiny step-up tolerance.
+    pvals_corrected[reject] = np.minimum(pvals_corrected[reject], alpha)
     
     q_dtype = torch.float32 if p_values.device.type == "mps" else torch.float64
     q_values = torch.tensor(pvals_corrected, dtype=q_dtype, device=p_values.device).reshape(p_values.shape)
