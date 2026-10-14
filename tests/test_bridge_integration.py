@@ -110,6 +110,22 @@ def test_hook_names_resolve_and_have_expected_shapes(bridge, data, hook_type):
             bridge.set_use_hook_mlp_in(original_flag)
 
 
+def test_mlp_in_audit_uses_firing_hook_and_restores_model_flag(bridge, data):
+    clean, corr, correct, incorrect = data
+    original_flag = getattr(bridge.cfg, "use_hook_mlp_in", False)
+    auditor = PatchingAuditor(bridge, metric_fn, hook_type="mlp_in")
+
+    result = auditor.run_patching_audit(clean, corr, correct, incorrect)
+
+    assert result.raw_patching_effects.shape == (
+        bridge.cfg.n_layers, clean.shape[1]
+    )
+    assert result.resolved_hook_names == tuple(
+        f"blocks.{layer}.hook_mlp_in" for layer in range(bridge.cfg.n_layers)
+    )
+    assert getattr(bridge.cfg, "use_hook_mlp_in", False) == original_flag
+
+
 def test_batched_path_matches_bruteforce_on_real_hooks(bridge, data):
     clean, corr, correct, incorrect = data
     n_layers, n_heads = bridge.cfg.n_layers, bridge.cfg.n_heads

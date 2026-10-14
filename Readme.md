@@ -111,6 +111,8 @@ This updates the q-values and significance masks on both results. Separate calls
 
 These are activation-patching locations, not claims that all architectures implement the same computation at each location. The tests exercise native TransformerLens 4 bridges and a cached GPT-2 integration path; that is not validation of every supported architecture or of every hook's scientific interpretation.
 
+Before calculating effects, the auditor checks that each requested hook was actually captured during the clean forward pass. Some model bridges may list a hook that does not fire for that architecture; the audit stops with an error instead of returning empty or misleading results.
+
 <details>
 <summary>After valid p-values · Choose an FDR correction</summary>
 

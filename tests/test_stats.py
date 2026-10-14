@@ -152,6 +152,12 @@ def test_exact_signflip_near_constant_effects_keep_positive_resolution_floor():
     assert (p_values >= 1 / 512).all()
 
 
+def test_exact_signflip_constant_effects_are_not_all_counted_as_ties():
+    effects = torch.full((1, 5, 10), 0.83, dtype=torch.float64)
+    p_values = signflip_p_values(effects, n_perm=9999)
+    assert torch.equal(p_values, torch.full_like(p_values, 1 / 512))
+
+
 def test_fdr_by_adjustment():
     """Benjamini-Yekutieli is more conservative but should still find strong signals."""
     p_values = torch.tensor([

@@ -187,7 +187,6 @@ def signflip_p_values(
     tie_tolerance = (
         16 * torch.finfo(result_dtype).eps
         * observed.abs().clamp_min(1.0)
-        * (1.0 + observed.square() / (n_prompts - 1))
     )
     for start in range(0, total, chunk_size):
         count = min(chunk_size, total - start)

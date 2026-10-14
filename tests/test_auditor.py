@@ -1,5 +1,6 @@
 import torch
 import pytest
+from collections import UserDict
 from types import SimpleNamespace
 from transformer_lens import TransformerBridge
 from transformerlens_fdr.auditor import PatchingAuditor
@@ -140,22 +141,20 @@ def test_per_component_empirical_null_path(tiny_model, base_tokens):
     assert torch.isfinite(results.p_values).all()
 
 
-def test_mlp_in_is_position_specific_and_restores_model_flag(tiny_model, base_tokens):
+def test_mlp_in_registered_but_inactive_hook_fails_and_restores_flag(
+    tiny_model, base_tokens
+):
     original_mlp_in_flag = getattr(tiny_model.cfg, "use_hook_mlp_in", False)
     auditor = PatchingAuditor(
         tiny_model,
         metric_fn=_make_mock_metric(),
         hook_type="mlp_in",
     )
-    results = auditor.run_patching_audit(**base_tokens)
-    assert results.raw_patching_effects.shape == (
-        tiny_model.cfg.n_layers, base_tokens["clean_tokens"].shape[1]
-    )
-    assert results.per_prompt_effects.shape == (
-        tiny_model.cfg.n_layers, base_tokens["clean_tokens"].shape[1], 2
-    )
-    assert results.resolved_hook_names == ("blocks.0.hook_mlp_in",)
-    assert set(results.summary_df["hook_name"]) == {"blocks.0.hook_mlp_in"}
+    # This legacy Attn-Only checkpoint registers the hook name but does not
+    # emit the hook during its forward pass. Never return empty or misleading
+    # audit results for a registered-but-inactive hook.
+    with pytest.raises(RuntimeError, match="did not cache requested hook"):
+        auditor.run_patching_audit(**base_tokens)
     assert getattr(tiny_model.cfg, "use_hook_mlp_in", False) == original_mlp_in_flag
 
 
@@ -168,6 +167,16 @@ def test_resid_mid_prefers_whole_stream_hook_when_available():
     auditor = PatchingAuditor(model, metric_fn=_make_mock_metric(), hook_type="resid_mid")
     assert auditor._hook_cfg["hook_suffix"] == "hook_resid_mid"
     assert not auditor._needs_mlp_in_flag
+
+
+def test_resid_mid_validation_accepts_mapping_hook_dict():
+    model = SimpleNamespace(
+        cfg=SimpleNamespace(n_layers=1),
+        hook_dict=UserDict({"blocks.0.hook_resid_mid": object()}),
+        set_use_hook_mlp_in=lambda enabled: None,
+    )
+    auditor = PatchingAuditor(model, metric_fn=_make_mock_metric(), hook_type="resid_mid")
+    assert auditor._hook_cfg["hook_suffix"] == "hook_resid_mid"
 
 
 def test_resid_mid_does_not_silently_alias_to_mlp_input():
@@ -189,7 +198,7 @@ def test_cache_filter_uses_supported_signature_and_falls_back_cleanly():
 
         def run_with_cache(self, tokens, names_filter=None):
             self.names = names_filter
-            return tokens, {}
+            return tokens, {name: None for name in (names_filter or [])}
 
     filtered = FilteredModel()
     auditor = PatchingAuditor(filtered, metric_fn=_make_mock_metric())
@@ -200,11 +209,26 @@ def test_cache_filter_uses_supported_signature_and_falls_back_cleanly():
         cfg = SimpleNamespace(n_layers=1)
 
         def run_with_cache(self, tokens):
-            return tokens, {}
+            return tokens, {"blocks.0.attn.hook_z": None}
 
     legacy = LegacyModel()
     legacy_auditor = PatchingAuditor(legacy, metric_fn=_make_mock_metric())
     assert legacy_auditor._run_with_filtered_cache("legacy")[0] == "legacy"
+
+
+def test_cache_validation_catches_registered_but_inactive_hook():
+    class InactiveHookModel:
+        cfg = SimpleNamespace(n_layers=1)
+        hook_dict = {"blocks.0.hook_resid_mid": object()}
+
+        def run_with_cache(self, tokens, names_filter=None):
+            return tokens, {}
+
+    auditor = PatchingAuditor(
+        InactiveHookModel(), metric_fn=_make_mock_metric(), hook_type="resid_mid"
+    )
+    with pytest.raises(RuntimeError, match="registered but inactive"):
+        auditor._run_with_filtered_cache("input")
 
 
 # -------------------------------------------------------------------

@@ -4,6 +4,7 @@ import warnings
 import math
 import inspect
 from contextlib import contextmanager
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, List
 
@@ -353,7 +354,7 @@ class PatchingAuditor:
         self._needs_mlp_in_flag = False
         self._original_mlp_in_flag = None
         hook_dict = getattr(model, "hook_dict", None)
-        if hook_type in {"resid_mid", "mlp_in"} and isinstance(hook_dict, dict):
+        if hook_type in {"resid_mid", "mlp_in"} and isinstance(hook_dict, Mapping):
             requested_name = self._hook_cfg["hook_suffix"]
             available = all(
                 _build_hook_name(layer, requested_name) in hook_dict
@@ -376,7 +377,7 @@ class PatchingAuditor:
                 getattr(model, "cfg", None), "use_hook_mlp_in", False
             )
             self._needs_mlp_in_flag = True
-        elif hook_type == "mlp_in" and not isinstance(hook_dict, dict):
+        elif hook_type == "mlp_in" and not isinstance(hook_dict, Mapping):
             raise ValueError(
                 "hook_type='mlp_in' requires a model exposing hook_mlp_in or "
                 "set_use_hook_mlp_in()."
@@ -400,6 +401,11 @@ class PatchingAuditor:
             for layer in range(self.model.cfg.n_layers)
         ]
         with self._model_hook_context():
+            hook_dict = getattr(self.model, "hook_dict", None)
+            expected_names = []
+            for name in names:
+                hook = hook_dict.get(name) if isinstance(hook_dict, Mapping) else None
+                expected_names.append(getattr(hook, "name", None) or name)
             try:
                 parameters = inspect.signature(self.model.run_with_cache).parameters
             except (TypeError, ValueError):
@@ -412,8 +418,20 @@ class PatchingAuditor:
                     for parameter in parameters.values()
                 )
             if supports_filter:
-                return self.model.run_with_cache(tokens, names_filter=names)
-            return self.model.run_with_cache(tokens)
+                logits, cache = self.model.run_with_cache(tokens, names_filter=names)
+            else:
+                logits, cache = self.model.run_with_cache(tokens)
+
+        missing = [name for name in expected_names if name not in cache]
+        if missing:
+            available = list(cache.keys()) if hasattr(cache, "keys") else []
+            raise RuntimeError(
+                "The model did not cache requested hook(s): "
+                f"{', '.join(missing)}. The hook may be registered but inactive "
+                "for this architecture; choose a hook that fires in the forward pass. "
+                f"Available cache keys include: {available[:8]}"
+            )
+        return logits, cache
 
     def _run_with_hooks(self, tokens, **kwargs):
         with self._model_hook_context():
