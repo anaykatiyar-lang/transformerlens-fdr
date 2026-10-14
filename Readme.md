@@ -214,6 +214,8 @@ the groups are independent or that the selected mask is causal.
 
 This short example uses two matched prompt pairs only to show the API; real inference needs enough independent prompt pairs for the task and testing family. Supply aligned clean/corrupted prompts, target token IDs, and a metric that returns one value per prompt.
 
+The PyPI package name uses a hyphen (`transformerlens-fdr`); Python imports use an underscore (`transformerlens_fdr`). The import below is the correct Python form.
+
 ```python
 import torch
 from transformer_lens import TransformerBridge
