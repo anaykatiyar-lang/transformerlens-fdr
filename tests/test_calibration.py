@@ -293,3 +293,24 @@ def test_strongly_skewed_null_exceeds_nominal_signflip_rejection_rate():
 
 if __name__ == "__main__":
     run_calibration_suite()
+
+
+def test_cluster_signflip_controls_error_when_prompt_level_test_does_not():
+    """Prompts nested in templates: whole-template effects are symmetric about zero
+    (a true null), but prompts within a template are strongly dependent."""
+    n_groups, per_group, n_components = 10, 5, 400
+    generator = torch.Generator().manual_seed(2026)
+    template = torch.randn((1, n_components, n_groups, 1), generator=generator)
+    noise = 0.5 * torch.randn(
+        (1, n_components, n_groups, per_group), generator=generator
+    )
+    effects = (template + noise).reshape(1, n_components, n_groups * per_group)
+    group_ids = [g for g in range(n_groups) for _ in range(per_group)]
+
+    prompt_level = signflip_p_values(
+        effects, n_perm=499, generator=torch.Generator().manual_seed(1)
+    )
+    cluster = signflip_p_values(effects, n_perm=9999, group_ids=group_ids)
+
+    assert (prompt_level <= 0.05).double().mean().item() > 0.20
+    assert (cluster <= 0.05).double().mean().item() < 0.10

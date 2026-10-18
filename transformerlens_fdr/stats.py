@@ -135,12 +135,80 @@ def calculate_empirical_p_values(
     return p_values
 
 
+def encode_group_ids(group_ids, n_prompts: int):
+    """Map prompt group labels to contiguous integer codes.
+
+    ``group_ids`` is any one-dimensional sequence (list, tuple, NumPy array,
+    pandas Series, or 1-D tensor) with one hashable label per prompt, for
+    example the template that generated each row. Returns ``(codes, labels,
+    sizes)``: a ``[n_prompts]`` long tensor, the distinct labels in order of
+    first appearance, and the number of prompts in each group.
+    """
+    if isinstance(group_ids, torch.Tensor):
+        if group_ids.ndim != 1:
+            raise ValueError("group_ids must be one-dimensional.")
+        labels_in = group_ids.detach().cpu().tolist()
+    else:
+        try:
+            labels_in = list(group_ids)
+        except TypeError as error:
+            raise TypeError("group_ids must be a one-dimensional sequence.") from error
+    if len(labels_in) != n_prompts:
+        raise ValueError(
+            f"group_ids has {len(labels_in)} entries but there are {n_prompts} prompts."
+        )
+    mapping = {}
+    codes = []
+    for label in labels_in:
+        if label is None or (isinstance(label, float) and label != label):
+            raise ValueError("group_ids must not contain None or NaN.")
+        try:
+            code = mapping.setdefault(label, len(mapping))
+        except TypeError as error:
+            raise TypeError("group_ids must be hashable labels.") from error
+        codes.append(code)
+    sizes = [0] * len(mapping)
+    for code in codes:
+        sizes[code] += 1
+    return (
+        torch.tensor(codes, dtype=torch.long),
+        tuple(mapping),
+        tuple(sizes),
+    )
+
+
+def aggregate_effects_by_group(effects: torch.Tensor, group_ids):
+    """Average per-prompt effects within each prompt group.
+
+    ``effects`` is shaped ``[layers, components, prompts]``. Returns
+    ``(group_effects, info)`` where ``group_effects`` is shaped
+    ``[layers, components, groups]`` and holds the *unweighted* mean of each
+    group's prompts, so a group with many rows counts the same as one with few.
+    ``info`` has ``labels``, ``sizes`` and ``n_groups``.
+    """
+    if effects.ndim != 3:
+        raise ValueError("effects must have shape [layers, components, prompts].")
+    codes, labels, sizes = encode_group_ids(group_ids, effects.shape[-1])
+    dtype = torch.float32 if effects.device.type == "mps" else torch.float64
+    size_tensor = torch.tensor(sizes, dtype=dtype, device=effects.device)
+    codes = codes.to(effects.device)
+    membership = torch.zeros(
+        (effects.shape[-1], len(labels)), dtype=dtype, device=effects.device
+    )
+    membership[torch.arange(effects.shape[-1], device=effects.device), codes] = (
+        1.0 / size_tensor[codes]
+    )
+    group_effects = effects.to(dtype) @ membership
+    return group_effects, {"labels": labels, "sizes": sizes, "n_groups": len(labels)}
+
+
 def signflip_p_values(
     effects: torch.Tensor,
     n_perm: int = 9999,
     two_sided: bool = True,
     generator: torch.Generator = None,
     zero_effect_tolerance: float = 1e-8,
+    group_ids=None,
 ) -> torch.Tensor:
     """Paired sign-flip p-values for effects shaped [layers, components, prompts].
 
@@ -151,15 +219,29 @@ def signflip_p_values(
     before computing the statistic; use a tolerance in normalized-effect units.
     The routine enumerates every unique sign pattern when its count is no
     larger than ``n_perm``; otherwise it uses the requested Monte Carlo draws.
+
+    If ``group_ids`` (one label per prompt, such as the generating template)
+    is supplied, prompts are first averaged within each group and the test
+    flips the sign of whole groups. The null then assumes independent groups,
+    each with a group-mean effect symmetric about zero; dependence among
+    prompts of the same group is allowed. The p-value floor is set by the
+    number of groups, not the number of prompts.
     """
     if effects.ndim != 3:
         raise ValueError("effects must have shape [layers, components, prompts].")
+    grouped = group_ids is not None
+    if grouped:
+        effects, _ = aggregate_effects_by_group(effects, group_ids)
     if not isinstance(n_perm, int) or n_perm < 1:
         raise ValueError("n_perm must be positive.")
     if not math.isfinite(zero_effect_tolerance) or zero_effect_tolerance < 0:
         raise ValueError("zero_effect_tolerance must be finite and non-negative.")
     if effects.shape[-1] < 2:
-        raise ValueError("Sign-flip testing requires at least two prompt effects.")
+        raise ValueError(
+            "Cluster sign-flip testing requires at least two prompt groups."
+            if grouped else
+            "Sign-flip testing requires at least two prompt effects."
+        )
     if not torch.isfinite(effects).all():
         raise ValueError("effects must be finite.")
 

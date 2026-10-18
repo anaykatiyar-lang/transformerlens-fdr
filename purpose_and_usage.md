@@ -10,6 +10,7 @@ TransformerLens-FDR helps compare activation-patching effects across model compo
 | --- | --- | --- |
 | Exploring or no defensible no-effect comparison | `method="none"` (default) | Descriptive effect and outlier summaries only |
 | Independent prompt effects, each symmetric around zero under no effect | `method="signflip"` | Exchangeability alone is not sufficient; the package cannot validate symmetry or independence |
+| Prompts come from a modest number of templates; whole-template effects are independent and symmetric around zero | `method="signflip"` with `group_ids=...` | Cluster sign-flip: the template, not the row, is the unit; the p-value floor depends on the number of templates |
 | Task-specific controls preserve the experiment while removing the relation being tested | `null_distribution=...` | Inference is relative to the control design, which the researcher must justify |
 | Neither null design is defensible for the data | Stay exploratory or develop and validate a suitable null | Do not read descriptive rankings as significance |
 
@@ -36,7 +37,22 @@ results = auditor.run_patching_audit(
 )
 ```
 
-The smallest possible p-value is `1 / (n_perm + 1)`. Use enough permutations to resolve the significance levels you care about.
+The audit enumerates every unique sign pattern when feasible, so the smallest attainable p-value is `max(1 / (n_perm + 1), 1 / 2^(n-1))` for `n` prompts; with few prompts it cannot get small however large `n_perm` is. Check `preflight.resolution_report` before spending compute.
+
+If your rows come from shared templates, pass one label per prompt:
+
+```python
+results = auditor.run_patching_audit(
+    clean_tokens=clean_tokens,
+    corrupted_tokens=corrupted_tokens,
+    correct_tokens=correct_tokens,
+    incorrect_tokens=incorrect_tokens,
+    method="signflip",
+    group_ids=template_ids,  # one hashable label per prompt row
+)
+```
+
+Prompts are averaged within each group (unweighted), whole groups are sign-flipped, and the exact two-sided floor is `1 / 2^(G-1)` for `G` groups. If `n_perm` is too small to enumerate all patterns, the Monte Carlo floor is `1 / (n_perm + 1)`. Aim for many distinct templates. `group_ids` is valid only with `method="signflip"`. In `run_heldout_validation`, add `group_ids` to `selection_inputs` to cluster the selection test; it is never applied to the descriptive held-out audit.
 
 For sign-flip inference, per-prompt normalized effects with absolute value at most `zero_effect_tolerance` (default `1e-8`) are treated as zero to avoid calling floating-point residue a consistent effect. This is not a minimum-effect test: a small but nonzero effect above that tolerance can still be statistically significant, and practical importance needs a separate analysis.
 
@@ -163,6 +179,8 @@ After the full audit, `print(results.format_summary())` gives a short, copyable 
 | `exact_zero_components` / `numerically_zero_components` | Components whose per-prompt effects are exactly zero or all within the configured sign-flip zero tolerance |
 | `family_size` / `resolution_report` | Number of hypotheses corrected and the attainable p-value/rank information |
 | `signflip_mode` / `signflip_pattern_count` | Whether the audit used exact sign-pattern enumeration or Monte Carlo sampling, and how many patterns it evaluated |
+| `signflip_unit` / `signflip_group_count` / `signflip_group_sizes` / `signflip_group_labels` | `"prompt"` or `"group"`, plus the group structure when `group_ids` was used |
+| `group_effects` / `group_mean_effect` (summary column) | Per-group mean effects and their average per component when `group_ids` was used; this is the quantity the cluster test targets |
 | `resolved_hook_names` | The actual per-layer hook names used. `resid_mid` requires a true whole-stream hook; use `mlp_in` for the separate MLP-branch input intervention. |
 | `outlier_scale_method` | The descriptive scale method used for outlier scores; also included in the methods statement |
 | `methods_statement` | Plain-language summary of the correction and null assumptions |

@@ -1,11 +1,15 @@
+import itertools
+
 import torch
 import pytest
 from transformerlens_fdr.stats import (
+    aggregate_effects_by_group,
     apply_fdr_adjustment,
     calculate_p_values,
     compute_control_baseline,
     compute_robust_baseline,
     _compute_robust_baseline_details,
+    encode_group_ids,
     signflip_minimum_p,
     signflip_permutation_info,
     signflip_p_values,
@@ -201,3 +205,110 @@ def test_cli_bounds():
     effects_uniform = torch.tensor([[1.0, 1.0], [1.0, 1.0]])
     cli_uniform = circuit_localization_index(effects_uniform)
     assert 0.0 <= cli_uniform < 0.01
+
+
+# ---- Cluster (prompt-group) sign-flip -------------------------------------
+
+
+def test_encode_group_ids_orders_labels_and_counts_sizes():
+    codes, labels, sizes = encode_group_ids(["b", "a", "b", "c", "a", "b"], 6)
+    assert codes.tolist() == [0, 1, 0, 2, 1, 0]
+    assert labels == ("b", "a", "c")
+    assert sizes == (3, 2, 1)
+
+
+def test_encode_group_ids_accepts_tensor_labels():
+    _, labels, sizes = encode_group_ids(torch.tensor([5, 5, 9]), 3)
+    assert labels == (5, 9)
+    assert sizes == (2, 1)
+
+
+@pytest.mark.parametrize(
+    "bad, n_prompts, error, match",
+    [
+        (["a", "b"], 3, ValueError, "entries"),
+        (["a", None, "b"], 3, ValueError, "None or NaN"),
+        (["a", float("nan"), "b"], 3, ValueError, "None or NaN"),
+        ([["x"], ["y"]], 2, TypeError, "hashable"),
+        (torch.zeros(2, 2), 4, ValueError, "one-dimensional"),
+    ],
+)
+def test_encode_group_ids_rejects_bad_labels(bad, n_prompts, error, match):
+    with pytest.raises(error, match=match):
+        encode_group_ids(bad, n_prompts)
+
+
+def test_aggregate_effects_by_group_uses_unweighted_group_means():
+    effects = torch.tensor([[[1.0, 3.0, 10.0, 2.0]]])
+    grouped, info = aggregate_effects_by_group(effects, ["a", "a", "b", "c"])
+    assert grouped.shape == (1, 1, 3)
+    expected = torch.tensor([2.0, 10.0, 2.0], dtype=grouped.dtype)
+    assert torch.allclose(grouped[0, 0], expected)
+    assert info == {"labels": ("a", "b", "c"), "sizes": (2, 1, 1), "n_groups": 3}
+
+
+def _brute_force_group_p_values(group_means):
+    """All 2**G sign patterns, studentized two-sided; group_means is [components, G]."""
+    n_groups = group_means.shape[-1]
+
+    def studentized(values):
+        spread = values.std(-1, unbiased=True).clamp_min(1e-12)
+        return values.mean(-1) / (spread / n_groups ** 0.5)
+
+    observed = studentized(group_means)
+    patterns = torch.tensor(
+        list(itertools.product([-1.0, 1.0], repeat=n_groups)), dtype=group_means.dtype
+    )
+    null = studentized(patterns[:, None, :] * group_means[None])
+    return (null.abs() >= observed.abs() - 1e-9).to(group_means.dtype).mean(0)
+
+
+def test_cluster_signflip_matches_brute_force_over_group_patterns():
+    generator = torch.Generator().manual_seed(21)
+    effects = torch.randn((2, 3, 12), generator=generator) + 0.4
+    group_ids = [g for g in range(4) for _ in range(3)]
+    p_values = signflip_p_values(effects, n_perm=9999, group_ids=group_ids)
+    group_means = effects.double().reshape(2, 3, 4, 3).mean(-1).reshape(6, 4)
+    torch.testing.assert_close(
+        p_values.reshape(6).double(), _brute_force_group_p_values(group_means)
+    )
+
+
+def test_singleton_groups_match_prompt_level_signflip():
+    generator = torch.Generator().manual_seed(5)
+    effects = torch.randn((2, 3, 8), generator=generator) + 0.3
+    prompt_level = signflip_p_values(effects, n_perm=9999)
+    singleton = signflip_p_values(effects, n_perm=9999, group_ids=list(range(8)))
+    torch.testing.assert_close(prompt_level, singleton)
+
+
+def test_cluster_floor_depends_on_groups_not_prompts():
+    n_groups, per_group = 5, 8
+    generator = torch.Generator().manual_seed(9)
+    effects = 1.0 + 0.01 * torch.randn((1, 1, n_groups * per_group), generator=generator)
+    group_ids = [g for g in range(n_groups) for _ in range(per_group)]
+    cluster = signflip_p_values(effects, n_perm=9999, group_ids=group_ids)
+    prompt_level = signflip_p_values(
+        effects, n_perm=9999, generator=torch.Generator().manual_seed(1)
+    )
+    assert cluster.item() == pytest.approx(1 / 16)
+    assert prompt_level.item() < 0.01
+
+
+def test_cluster_signflip_uses_monte_carlo_floor_when_group_patterns_exceed_budget():
+    generator = torch.Generator().manual_seed(14)
+    effects = torch.randn((1, 3, 20), generator=generator)
+    group_ids = [group for group in range(10) for _ in range(2)]
+    p_values = signflip_p_values(
+        effects,
+        n_perm=99,
+        group_ids=group_ids,
+        generator=torch.Generator().manual_seed(15),
+    )
+    assert (p_values >= 1 / 100).all()
+    torch.testing.assert_close(p_values * 100, (p_values * 100).round())
+
+
+def test_cluster_signflip_requires_two_groups():
+    with pytest.raises(ValueError, match="at least two prompt groups"):
+        signflip_p_values(torch.randn((1, 2, 6)), group_ids=["a"] * 6)

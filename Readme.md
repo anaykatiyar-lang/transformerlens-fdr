@@ -50,7 +50,9 @@ $$
 
 Use `method="signflip"` when prompt-level effects are independent and each effect is symmetric about zero under its null. Exchangeability alone is not enough: sign-flip validity comes from sign symmetry, not from permutation exchangeability. Repeated or closely related prompts can break independence; a skewed distribution with mean zero can break symmetry. The test checks symmetry about zero, not just whether the mean is zero. The package cannot check these assumptions for you.
 
-The smallest possible p-value is `1 / (n_perm + 1)`. Set `n_perm` when creating `PatchingAuditor`. For example, with 144 tests and target level 0.05, 3,000 permutations resolve the first Benjamini–Hochberg threshold. Benjamini–Yekutieli needs finer p-value resolution, so it requires more permutations.
+The audit enumerates every unique sign pattern when there are no more than `n_perm` of them (two-sided: `2^(n-1)` for `n` prompts); otherwise it samples `n_perm` random patterns. The smallest attainable p-value is therefore `max(1 / (n_perm + 1), 1 / 2^(n-1))`: few prompts limit resolution no matter how large `n_perm` is. The audit reports the floor it used. Set `n_perm` when creating `PatchingAuditor`. For example, with 144 tests and target level 0.05, 3,000 permutations resolve the first Benjamini–Hochberg threshold when you have enough prompts. Benjamini–Yekutieli needs finer p-value resolution.
+
+**Prompts from shared templates.** Rows generated from the same template are usually dependent, which inflates the per-prompt test. Pass `group_ids` (one label per prompt, e.g. its template) to run a cluster sign-flip instead: prompts are averaged within each group (unweighted), whole groups are sign-flipped, and the test assumes independent groups whose mean effects are symmetric about zero. Dependence within a group is allowed. For `G` groups, the exact two-sided floor is `1 / 2^(G-1)`; if `n_perm` is too small to enumerate all patterns, the Monte Carlo floor is `1 / (n_perm + 1)`. So you need many distinct templates, not just many rows. `group_ids` works only with `method="signflip"`.
 
 The sign-flip test is two-sided by default. A significant negative effect means patching the clean activation lowered the supplied metric relative to the corrupted run; interpret that direction according to how your metric is defined. Effects whose absolute normalized value is at most `zero_effect_tolerance` (default `1e-8`) are treated as zero. This is a numerical-zero safeguard, not a practical-effect test. The result records exact and numerical zero-component counts.
 
@@ -188,6 +190,7 @@ Before a long audit, the same inputs can be checked with:
 preflight = auditor.check_setup(
     clean_tokens, corrupted_tokens, correct_tokens, incorrect_tokens,
     method="signflip",  # omit this for the descriptive default
+    # group_ids=template_ids,  # optional: cluster sign-flip over prompt groups
 )
 print(preflight.format_summary())
 ```
@@ -259,8 +262,10 @@ For reproducibility, record the exact prompt pairs and model ID/revision, hook t
   Applies one correction across several calibrated audit results, mutating their q-values and masks to reflect the pooled family.
 - **`resolution_report(n_tests, alpha, method, p_min)`**
   Reports the first-step threshold and the necessary minimum rank for a rejection at the available p-value resolution.
-- **`signflip_p_values(effects, n_perm, two_sided)`**
-  Computes sign-flip p-values for `[layers, components, prompts]` under a symmetry-about-zero null. It enumerates all unique patterns when feasible and otherwise uses Monte Carlo sampling.
+- **`signflip_p_values(effects, n_perm, two_sided, group_ids=None)`**
+  Computes sign-flip p-values for `[layers, components, prompts]` under a symmetry-about-zero null. It enumerates all unique patterns when feasible and otherwise uses Monte Carlo sampling. With `group_ids`, prompts are averaged within groups and whole groups are flipped (cluster sign-flip).
+- **`aggregate_effects_by_group(effects, group_ids)`** / **`encode_group_ids(group_ids, n_prompts)`**
+  Helpers that map prompt labels to groups and compute the unweighted group means used by the cluster test.
 
 ### Visualization (Functions)
 - **`plot_fdr_heatmap(results, title)`**<br>

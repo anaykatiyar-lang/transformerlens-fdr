@@ -272,3 +272,65 @@ def test_real_model_shuffled_labels_smoke(tiny_model):
     assert results.p_values.shape == results.raw_patching_effects.shape
     assert torch.isfinite(results.p_values).all()
     assert torch.isfinite(results.q_values).all()
+
+
+def test_group_ids_require_signflip(tiny_model, base_tokens):
+    auditor = PatchingAuditor(tiny_model, metric_fn=_make_mock_metric(), n_perm=99)
+    with pytest.raises(ValueError, match="group_ids is used only"):
+        auditor.run_patching_audit(**base_tokens, group_ids=["a", "b"])
+    with pytest.raises(ValueError, match="group_ids is used only"):
+        auditor.check_setup(**base_tokens, group_ids=["a", "b"])
+
+
+def test_cluster_signflip_audit_records_group_structure(tiny_model, base_tokens):
+    auditor = PatchingAuditor(tiny_model, metric_fn=_make_mock_metric(), n_perm=99)
+    results = auditor.run_patching_audit(
+        **base_tokens, method="signflip", group_ids=["t1", "t2"]
+    )
+    assert results.signflip_unit == "group"
+    assert results.signflip_group_count == 2
+    assert results.signflip_group_sizes == (1, 1)
+    assert results.signflip_group_labels == ("t1", "t2")
+    assert results.signflip_pattern_count == 2
+    assert results.group_effects.shape[-1] == 2
+    assert "prompt groups" in results.methods_statement
+    assert "group_mean_effect" in results.summary_df.columns
+    assert "2 prompt groups" in results.format_summary()
+
+
+def test_cluster_signflip_needs_two_groups(tiny_model, base_tokens):
+    auditor = PatchingAuditor(tiny_model, metric_fn=_make_mock_metric(), n_perm=99)
+    with pytest.raises(ValueError, match="at least two prompt groups"):
+        auditor.run_patching_audit(
+            **base_tokens, method="signflip", group_ids=["t", "t"]
+        )
+
+
+def test_check_setup_reports_group_floor(tiny_model, base_tokens):
+    auditor = PatchingAuditor(tiny_model, metric_fn=_make_mock_metric(), n_perm=99)
+    preflight = auditor.check_setup(
+        **base_tokens, method="signflip", group_ids=["t1", "t2"]
+    )
+    assert preflight.n_groups == 2
+    assert preflight.resolution_report["p_min"] == pytest.approx(0.5)
+    assert "2 prompt groups" in preflight.format_summary()
+
+
+def test_check_setup_rejects_single_prompt_group(tiny_model, base_tokens):
+    auditor = PatchingAuditor(tiny_model, metric_fn=_make_mock_metric(), n_perm=99)
+    with pytest.raises(ValueError, match="at least two prompt groups"):
+        auditor.check_setup(
+            **base_tokens, method="signflip", group_ids=["same", "same"]
+        )
+
+
+def test_heldout_accepts_cluster_selection_and_ignores_groups_in_evaluation(
+    tiny_model, base_tokens
+):
+    auditor = PatchingAuditor(tiny_model, metric_fn=_make_mock_metric(), n_perm=99)
+    selection = {**base_tokens, "method": "signflip", "group_ids": ["a", "b"]}
+    evaluation = {**base_tokens, "group_ids": ["c", "d"]}
+    held_out = auditor.run_heldout_validation(
+        selection, evaluation, ["a", "b"], ["c", "d"]
+    )
+    assert held_out.selection_audit.signflip_unit == "group"

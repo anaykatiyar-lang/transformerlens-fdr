@@ -19,6 +19,8 @@ from .stats import (
     signflip_p_values,
     signflip_minimum_p,
     signflip_permutation_info,
+    aggregate_effects_by_group,
+    encode_group_ids,
 )
 from .metrics import normalized_patching_effect, circuit_localization_index
 
@@ -84,7 +86,15 @@ def _format_methods_statement(
         if fdr_method == "fdr_bh"
         else "The BY correction allows arbitrary dependence when the input p-values are valid."
     )
-    if null_description.startswith("sign-flip"):
+    if null_description.startswith("sign-flip over prompt groups"):
+        null_claim = (
+            "Cluster sign-flip p-values flip the sign of whole prompt groups "
+            "and test each component's unweighted mean of group means; they "
+            "assume independent groups, each with a group-mean effect "
+            "symmetric about zero under the null. Dependence among prompts "
+            "within a group is allowed."
+        )
+    elif null_description.startswith("sign-flip"):
         null_claim = (
             "Sign-flip p-values assume prompt effects are independent and each "
             "is symmetric about zero under the null."
@@ -152,6 +162,11 @@ class AuditResults:
     signflip_mode: Optional[str] = None
     signflip_pattern_count: Optional[int] = None
     outlier_scale_method: Optional[str] = None
+    signflip_unit: Optional[str] = None
+    signflip_group_count: Optional[int] = None
+    signflip_group_sizes: Optional[tuple] = None
+    signflip_group_labels: Optional[tuple] = None
+    group_effects: Optional[torch.Tensor] = None
 
     def format_summary(self) -> str:
         """Return a concise, copyable report of the method and key diagnostics."""
@@ -190,6 +205,11 @@ class AuditResults:
                 f"Sign-flip computation: {description} over "
                 f"{self.signflip_pattern_count} sign patterns."
             )
+        if self.signflip_unit == "group":
+            lines.append(
+                f"Sign-flip unit: {self.signflip_group_count} prompt groups "
+                f"(unweighted group means; group sizes {self.signflip_group_sizes})."
+            )
         lines.append(f"Descriptive CLI: {self.cli_score:.4f}")
         return "\n".join(lines)
 
@@ -207,6 +227,7 @@ class AuditPreflight:
     relative_gap_tolerance: float
     resolution_report: Optional[dict]
     messages: tuple
+    n_groups: Optional[int] = None
 
     def format_summary(self) -> str:
         lines = [
@@ -216,6 +237,11 @@ class AuditPreflight:
             f"(relative tolerance {self.relative_gap_tolerance:.3g}; "
             f"{'usable' if self.gap_usable else 'too small for stable normalization'}).",
         ]
+        if self.n_groups is not None:
+            lines.append(
+                f"Cluster sign-flip: {self.n_groups} prompt groups are the "
+                "sign-flip units."
+            )
         if self.gap_std is not None:
             lines.append(f"Prompt-to-prompt gap SD: {self.gap_std:.6g}.")
         else:
@@ -529,18 +555,34 @@ class PatchingAuditor:
         method: str = "none",
         null_distribution: Optional[torch.Tensor | NullDistribution] = None,
         pooled_null: bool = False,
+        group_ids=None,
     ) -> AuditPreflight:
         """Check prompt count, metric gap, and p-value resolution before patching.
 
         This runs only the clean and corrupted baseline forwards (two model
         passes), not the per-component patching loop. It cannot estimate how
         many components will be zero; those counts are reported after an audit.
+        With ``group_ids`` (one label per prompt, e.g. its template) the
+        sign-flip floor is computed from the number of groups.
         """
         if method not in {"none", "signflip"}:
             raise ValueError("method must be 'none' or 'signflip'.")
         batch_size, seq_len = self._validate_inputs(
             clean_tokens, corrupted_tokens, correct_tokens, incorrect_tokens
         )
+        n_groups = None
+        if group_ids is not None:
+            if method != "signflip" or null_distribution is not None:
+                raise ValueError(
+                    "group_ids is used only with method='signflip' and no "
+                    "null_distribution."
+                )
+            _, group_labels, _ = encode_group_ids(group_ids, batch_size)
+            n_groups = len(group_labels)
+            if n_groups < 2:
+                raise ValueError(
+                    "Cluster sign-flip testing requires at least two prompt groups."
+                )
         n_layers, n_components = self._get_audit_shape(seq_len)
         family_size = n_layers * n_components
         messages = []
@@ -578,12 +620,17 @@ class PatchingAuditor:
             effective_method = "empirical_null"
             p_min = 1.0 / (null_values.shape[0] + 1)
         elif method == "signflip":
+            n_units = n_groups if n_groups is not None else batch_size
             p_min = (
-                signflip_minimum_p(batch_size, self.n_perm)
-                if batch_size >= 2 else 1.0 / (self.n_perm + 1)
+                signflip_minimum_p(n_units, self.n_perm)
+                if n_units >= 2 else 1.0 / (self.n_perm + 1)
             )
-            if batch_size < 2:
-                messages.append("Sign-flip testing requires at least two prompt effects.")
+            if n_units < 2:
+                messages.append(
+                    "Cluster sign-flip testing requires at least two prompt groups."
+                    if n_groups is not None else
+                    "Sign-flip testing requires at least two prompt effects."
+                )
         else:
             messages.append(
                 "No null method selected: the audit will report descriptive scores only, "
@@ -622,6 +669,10 @@ class PatchingAuditor:
             if resolution["min_rank_for_any_rejection"] is None:
                 messages.append(
                     "No rejection is attainable at this p-value resolution for the selected family."
+                    + (
+                        " Add more distinct prompt groups to lower the floor."
+                        if n_groups is not None else ""
+                    )
                 )
             elif p_min > resolution["first_step_threshold"]:
                 messages.append(
@@ -639,6 +690,7 @@ class PatchingAuditor:
             relative_gap_tolerance=relative_tolerance,
             resolution_report=resolution,
             messages=tuple(messages),
+            n_groups=n_groups,
         )
 
     def _patch_head_in_layer(self, clean_cache, layer: int, head_idx: int):
@@ -764,6 +816,7 @@ class PatchingAuditor:
         null_distribution: Optional[torch.Tensor | NullDistribution] = None,
         method: str = "none",
         pooled_null: bool = False,
+        group_ids=None,
     ) -> AuditResults:
         """Run patching and return exploratory scores or calibrated inference.
 
@@ -780,7 +833,12 @@ class PatchingAuditor:
         a legitimate occurrence of the tokenizer's pad-token ID.
 
         ``method='signflip'`` tests the assumption that per-prompt effects are
-        symmetric about zero. With no valid null method, inferential fields are
+        symmetric about zero. Passing ``group_ids`` (one hashable label per
+        prompt, such as the template that generated it) switches to a cluster
+        sign-flip: prompts are averaged within each group, whole groups are
+        sign-flipped, and the p-value floor depends on the number of groups.
+        ``group_ids`` is valid only with ``method='signflip'`` and no
+        ``null_distribution``. With no valid null method, inferential fields are
         ``None`` and only robust exploratory outlier scores are returned.
         The default ``logit_difference`` metric reads the final sequence
         position; right-padded inputs therefore need a custom metric that
@@ -788,9 +846,20 @@ class PatchingAuditor:
         """
         if method not in {"none", "signflip"}:
             raise ValueError("method must be 'none' or 'signflip'.")
+        if group_ids is not None and (method != "signflip" or null_distribution is not None):
+            raise ValueError(
+                "group_ids is used only with method='signflip' and no "
+                "null_distribution."
+            )
         batch_size, seq_len = self._validate_inputs(
             clean_tokens, corrupted_tokens, correct_tokens, incorrect_tokens
         )
+        if group_ids is not None:
+            _, early_labels, _ = encode_group_ids(group_ids, batch_size)
+            if len(early_labels) < 2:
+                raise ValueError(
+                    "Cluster sign-flip testing requires at least two prompt groups."
+                )
 
         null_metadata = None
         null_description_override = None
@@ -881,6 +950,9 @@ class PatchingAuditor:
         minimum_attainable_p = None
         signflip_mode = None
         signflip_pattern_count = None
+        signflip_unit = None
+        group_info = None
+        group_effects = None
 
         if null_distribution is not None:
             if not isinstance(null_distribution, torch.Tensor):
@@ -923,9 +995,24 @@ class PatchingAuditor:
                     if pooled_null else null_description_override
                 )
         elif method == "signflip":
-            permutation_info = signflip_permutation_info(batch_size, self.n_perm)
+            if group_ids is not None:
+                group_effects, group_info = aggregate_effects_by_group(
+                    per_prompt, group_ids
+                )
+                if group_info["n_groups"] < 2:
+                    raise ValueError(
+                        "Cluster sign-flip testing requires at least two prompt groups."
+                    )
+                n_units = group_info["n_groups"]
+                signflip_input = group_effects
+                signflip_unit = "group"
+            else:
+                n_units = batch_size
+                signflip_input = per_prompt
+                signflip_unit = "prompt"
+            permutation_info = signflip_permutation_info(n_units, self.n_perm)
             p_values = signflip_p_values(
-                per_prompt,
+                signflip_input,
                 n_perm=self.n_perm,
                 zero_effect_tolerance=self.zero_effect_tolerance,
             )
@@ -934,11 +1021,18 @@ class PatchingAuditor:
             minimum_attainable_p = permutation_info["minimum_p"]
             signflip_mode = permutation_info["mode"]
             signflip_pattern_count = permutation_info["n_patterns"]
-            null_description = (
-                "sign-flip over prompts (requires independent prompt effects, each "
-                "symmetric about zero; "
-                "see skew robustness diagnostics)"
-            )
+            if group_info is not None:
+                null_description = (
+                    "sign-flip over prompt groups (requires independent groups, "
+                    "each group-mean effect symmetric about zero; prompts "
+                    "within a group may be dependent)"
+                )
+            else:
+                null_description = (
+                    "sign-flip over prompts (requires independent prompt effects, each "
+                    "symmetric about zero; the package does not test either "
+                    "assumption)"
+                )
         else:
             warnings.warn(
                 "No null supplied: results are exploratory outlier scores, not FDR-controlled.",
@@ -971,6 +1065,9 @@ class PatchingAuditor:
             _build_hook_name(layer, self._hook_cfg["hook_suffix"])
             for layer in range(n_layers)
         )
+        cluster_mean_effect = (
+            None if group_effects is None else group_effects.mean(dim=-1)
+        )
         records = []
         for layer in range(n_layers):
             for component in range(n_components):
@@ -991,6 +1088,8 @@ class PatchingAuditor:
                     else significant_mask[layer, component].item()
                 )
                 row["family_size"] = family_size
+                if group_effects is not None:
+                    row["group_mean_effect"] = cluster_mean_effect[layer, component].item()
                 records.append(row)
 
         return AuditResults(
@@ -1023,6 +1122,11 @@ class PatchingAuditor:
             signflip_mode=signflip_mode,
             signflip_pattern_count=signflip_pattern_count,
             outlier_scale_method=outlier_scale_method,
+            signflip_unit=signflip_unit,
+            signflip_group_count=None if group_info is None else group_info["n_groups"],
+            signflip_group_sizes=None if group_info is None else group_info["sizes"],
+            signflip_group_labels=None if group_info is None else group_info["labels"],
+            group_effects=group_effects,
             methods_statement=_format_methods_statement(
                 calibrated=calibrated,
                 null_description=null_description,
@@ -1124,7 +1228,10 @@ class PatchingAuditor:
         ``selection_group_ids`` and ``evaluation_group_ids`` should identify
         independent units (for example, prompt templates), not merely rows if
         several rows share a template. The selection inputs may include a null
-        method or empirical null. The held-out audit is descriptive and its
+        method or empirical null. To make the selection test cluster-aware,
+        also pass ``group_ids=selection_group_ids`` inside ``selection_inputs``
+        together with ``method='signflip'``; it is never applied to the
+        descriptive held-out audit. The held-out audit is descriptive and its
         CLI is calculated on the evaluation prompts; the joint effect uses the
         selection mask on those same held-out prompts.
         """
@@ -1152,6 +1259,7 @@ class PatchingAuditor:
         evaluation_kwargs.pop("null_distribution", None)
         evaluation_kwargs.pop("method", None)
         evaluation_kwargs.pop("pooled_null", None)
+        evaluation_kwargs.pop("group_ids", None)
         selected = self.run_patching_audit(**selection_kwargs)
         if selected.significant_mask is None:
             raise ValueError(

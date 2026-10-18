@@ -15,6 +15,8 @@ from .stats import (
     calculate_empirical_p_values,
     signflip_p_values,
     signflip_minimum_p,
+    aggregate_effects_by_group,
+    encode_group_ids,
     apply_fdr_adjustment,
     resolution_report,
 )
@@ -38,6 +40,8 @@ __all__ = [
     "calculate_empirical_p_values",
     "signflip_p_values",
     "signflip_minimum_p",
+    "aggregate_effects_by_group",
+    "encode_group_ids",
     "apply_fdr_adjustment",
     "resolution_report",
     "plot_fdr_heatmap"
