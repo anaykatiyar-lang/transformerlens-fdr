@@ -84,4 +84,4 @@ Record the source and analysis commit hashes, model and library versions, seeds,
 
 ## Deviations
 
-No deviations recorded. Document any changes with the date, reason, and whether model-scored comparison results had already been inspected.
+- **2026-10-20, post-run provenance:** After the full model-scored comparison had completed and its results had been inspected, the installed TransformerLens and `transformerlens-fdr` versions were checked in the Colab environment. The original run summary recorded both as `unknown`; the subsequent metadata check returned `4.2.0` and `0.1.0`. This was a departure from the plan to capture all library versions with the run. No prompts, model outputs, pre-specified settings, or inference results were changed. The runner has since been updated to capture installed distribution versions in future runs.

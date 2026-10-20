@@ -1,6 +1,6 @@
 """Compare ABC and name-swap corruptions on GPT-2 Small IOI.
 
-The pre-specified settings are in benchmarks/PHASE1_ABC_NAME_SWAP_PLAN.md.
+The pre-specified settings are in benchmarks/PHASE0B_ABC_NAME_SWAP_PLAN.md.
 The original Phase 0 benchmark and results are left unchanged.
 
     python benchmarks/ioi_abc_vs_name_swap.py --dry-run
