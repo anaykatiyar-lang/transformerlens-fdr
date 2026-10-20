@@ -362,6 +362,16 @@ def run(args):
     import scipy
     import transformers
 
+    # Capture installed versions before model loading or any model inference.
+    run_versions = {
+        "python": platform.python_version(),
+        "torch": torch.__version__,
+        "numpy": np.__version__,
+        "scipy": scipy.__version__,
+        "transformers": transformers.__version__,
+        "transformer_lens": package_version("transformer-lens"),
+        "transformerlens_fdr": package_version("transformerlens-fdr"),
+    }
     validate_templates(TEMPLATES)
     torch.manual_seed(SEED)
     model = TransformerBridge.boot_transformers("gpt2")
@@ -385,15 +395,8 @@ def run(args):
         "alpha": ALPHA,
         "selection_template_ids": list(selection_ids),
         "evaluation_template_ids": list(evaluation_ids),
-        "versions": {
-            "python": platform.python_version(),
-            "torch": torch.__version__,
-            "numpy": np.__version__,
-            "scipy": scipy.__version__,
-            "transformers": transformers.__version__,
-            "transformer_lens": package_version("transformer-lens"),
-            "transformerlens_fdr": package_version("transformerlens-fdr"),
-        },
+        "versions": run_versions,
+        "version_capture_stage": "before_model_loading",
         "analyses": {},
     }
     auditor = PatchingAuditor(
