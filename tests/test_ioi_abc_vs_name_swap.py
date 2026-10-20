@@ -302,3 +302,18 @@ def test_heldout_helper_rejects_overlapping_template_groups(monkeypatch):
     evaluation = [{"template": 1}]
     with pytest.raises(ValueError, match="disjoint"):
         runner.heldout_one(None, StubAuditor(), selection, evaluation, 4, "abc")
+
+
+def test_package_version_reads_installed_distribution_metadata(monkeypatch):
+    versions = {"transformer-lens": "4.9.1", "transformerlens-fdr": "0.1.0"}
+    monkeypatch.setattr(runner, "installed_version", lambda name: versions[name])
+    assert runner.package_version("transformer-lens") == "4.9.1"
+    assert runner.package_version("transformerlens-fdr") == "0.1.0"
+
+
+def test_package_version_falls_back_only_when_distribution_missing(monkeypatch):
+    def missing(name):
+        raise runner.PackageNotFoundError(name)
+
+    monkeypatch.setattr(runner, "installed_version", missing)
+    assert runner.package_version("transformer-lens") == "unknown"
