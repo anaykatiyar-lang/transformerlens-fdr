@@ -219,3 +219,86 @@ def test_write_summary_preserves_existing_file_on_serialization_failure(tmp_path
     with pytest.raises(ValueError, match="Out of range float"):
         runner.write_summary(tmp_path, {"invalid": np.float64("nan")})
     assert (tmp_path / "summary.json").read_text() == previous
+
+
+@pytest.mark.parametrize("n_selected, joint_effect", [(0, 0.0), (2, 0.72)])
+def test_heldout_evaluation_with_empty_and_nonempty_masks(monkeypatch, n_selected, joint_effect):
+    """The library helper uses the selection mask on disjoint evaluation templates."""
+    from transformerlens_fdr.auditor import PatchingAuditor
+
+    selection = [{"template": 0}, {"template": 0}, {"template": 1}, {"template": 1}]
+    evaluation = [{"template": 2}, {"template": 2}]
+    mask = torch.zeros((12, 12), dtype=torch.bool)
+    if n_selected:
+        mask[9, 9] = True
+        mask[10, 7] = True
+
+    def fake_batch(model, examples, condition, target_length, torch_module):
+        assert condition == "name_swap"
+        n = len(examples)
+        return (
+            torch.zeros((n, target_length), dtype=torch.long),
+            torch.ones((n, target_length), dtype=torch.long),
+            torch.zeros(n, dtype=torch.long),
+            torch.ones(n, dtype=torch.long),
+            [e["template"] for e in examples],
+        )
+
+    class StubAuditor:
+        run_heldout_validation = PatchingAuditor.run_heldout_validation
+
+        def check_setup(self, *args, **kwargs):
+            return SimpleNamespace(gap_usable=True)
+
+        def run_patching_audit(self, clean_tokens, corrupted_tokens,
+                               correct_tokens, incorrect_tokens, **kwargs):
+            if kwargs.get("method") == "signflip":
+                assert kwargs["group_ids"] == [0, 0, 1, 1]
+                return SimpleNamespace(significant_mask=mask.clone())
+            assert not kwargs
+            return SimpleNamespace()
+
+        def run_joint_patching(self, clean_tokens, corrupted_tokens,
+                               correct_tokens, incorrect_tokens, patching_mask):
+            assert torch.equal(patching_mask, mask)
+            assert clean_tokens.shape[0] == len(evaluation)
+            return joint_effect
+
+    monkeypatch.setattr(runner, "condition_batch", fake_batch)
+    monkeypatch.setattr(runner, "gap_diagnostics", lambda model, inputs: {"mean": 2.5})
+    result = runner.heldout_one(
+        None, StubAuditor(), selection, evaluation, 4, "name_swap"
+    )
+    assert result["status"] == "complete"
+    assert result["selection_heads_bh"] == n_selected
+    assert result["joint_normalized_effect"] == pytest.approx(joint_effect)
+    assert result["joint_unnormalized_effect"] == pytest.approx(2.5 * joint_effect)
+    assert result["selection_templates"] == [0, 1]
+    assert result["evaluation_templates"] == [2]
+
+
+def test_heldout_helper_rejects_overlapping_template_groups(monkeypatch):
+    """The evaluation helper must not treat shared templates as held out."""
+    from transformerlens_fdr.auditor import PatchingAuditor
+
+    class StubAuditor:
+        run_heldout_validation = PatchingAuditor.run_heldout_validation
+
+        def check_setup(self, *args, **kwargs):
+            return SimpleNamespace(gap_usable=True)
+
+    def fake_batch(model, examples, condition, target_length, torch_module):
+        n = len(examples)
+        return (
+            torch.zeros((n, target_length), dtype=torch.long),
+            torch.ones((n, target_length), dtype=torch.long),
+            torch.zeros(n, dtype=torch.long),
+            torch.ones(n, dtype=torch.long),
+            [e["template"] for e in examples],
+        )
+
+    monkeypatch.setattr(runner, "condition_batch", fake_batch)
+    selection = [{"template": 0}, {"template": 1}]
+    evaluation = [{"template": 1}]
+    with pytest.raises(ValueError, match="disjoint"):
+        runner.heldout_one(None, StubAuditor(), selection, evaluation, 4, "abc")
