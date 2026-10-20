@@ -177,3 +177,45 @@ def test_discovery_overlap_is_descriptive():
     assert result["bh"]["jaccard"] == pytest.approx(1 / 3)
     assert result["bh"]["shared_heads"] == [[0, 1]]
     assert result["by"]["jaccard"] is None
+
+
+def test_discovery_lists_are_json_serializable():
+    first = np.zeros((12, 12), dtype=bool)
+    second = np.zeros((12, 12), dtype=bool)
+    first[0, 1] = first[1, 5] = True
+    second[0, 1] = second[4, 9] = True
+    left = {name: (None, first) for name in ("bh", "by")}
+    right = {name: (None, second) for name in ("bh", "by")}
+    result = runner.compare_discoveries(left, right)
+    assert result["bh"]["shared_heads"] == [[0, 1]]
+    assert type(result["bh"]["shared_heads"][0][0]) is int
+    assert json.loads(json.dumps(result)) == result
+
+
+def test_write_summary_converts_nested_numpy_types(tmp_path):
+    records = {
+        "comparison": {
+            "shared_heads": [[np.int64(0), np.int64(1)]],
+            "fraction": np.float64(0.125),
+            "mask": np.array([True, False], dtype=np.bool_),
+            "active": np.bool_(True),
+        },
+    }
+    runner.write_summary(tmp_path, records)
+    saved = json.loads((tmp_path / "summary.json").read_text())
+    assert saved == {
+        "comparison": {
+            "shared_heads": [[0, 1]],
+            "fraction": 0.125,
+            "mask": [True, False],
+            "active": True,
+        },
+    }
+
+
+def test_write_summary_preserves_existing_file_on_serialization_failure(tmp_path):
+    runner.write_summary(tmp_path, {"status": "previous"})
+    previous = (tmp_path / "summary.json").read_text()
+    with pytest.raises(ValueError, match="Out of range float"):
+        runner.write_summary(tmp_path, {"invalid": np.float64("nan")})
+    assert (tmp_path / "summary.json").read_text() == previous
