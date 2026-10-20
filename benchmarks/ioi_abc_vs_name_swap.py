@@ -15,6 +15,7 @@ assesses selected heads on the four evaluation templates.
 import argparse
 import csv
 import json
+from importlib.metadata import PackageNotFoundError, version as installed_version
 import os
 import platform
 import random
@@ -44,6 +45,14 @@ ALPHA = 0.05
 N_PERM = 9999
 PER_TEMPLATE = 6
 MAX_PAD = 3
+
+
+def package_version(distribution_name):
+    """Read the installed distribution version, including editable installs."""
+    try:
+        return installed_version(distribution_name)
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def git_sha():
@@ -350,8 +359,6 @@ def run(args):
     import torch
     from transformer_lens import TransformerBridge
     from transformerlens_fdr import PatchingAuditor, logit_difference
-    import transformer_lens
-    import transformerlens_fdr
     import scipy
     import transformers
 
@@ -384,8 +391,8 @@ def run(args):
             "numpy": np.__version__,
             "scipy": scipy.__version__,
             "transformers": transformers.__version__,
-            "transformer_lens": getattr(transformer_lens, "__version__", "unknown"),
-            "transformerlens_fdr": getattr(transformerlens_fdr, "__version__", "unknown"),
+            "transformer_lens": package_version("transformer-lens"),
+            "transformerlens_fdr": package_version("transformerlens-fdr"),
         },
         "analyses": {},
     }
