@@ -143,9 +143,9 @@ def compare_discoveries(left, right):
         union = a | b
         comparison[method] = {
             "jaccard": len(a & b) / len(union) if union else None,
-            "shared_heads": [list(head) for head in sorted(a & b)],
-            "abc_only": [list(head) for head in sorted(a - b)],
-            "name_swap_only": [list(head) for head in sorted(b - a)],
+            "shared_heads": [[int(value) for value in head] for head in sorted(a & b)],
+            "abc_only": [[int(value) for value in head] for head in sorted(a - b)],
+            "name_swap_only": [[int(value) for value in head] for head in sorted(b - a)],
         }
     return comparison
 
@@ -441,10 +441,23 @@ def run(args):
     print(f"Results saved under {output_dir}")
 
 
+def _json_numpy(value):
+    """Convert NumPy data to JSON-native numbers, booleans, and lists."""
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    raise TypeError(f"Cannot JSON-serialize {type(value).__name__}")
+
+
 def write_summary(output_dir, records):
-    with (output_dir / "summary.json").open("w") as output:
-        json.dump(records, output, indent=2, allow_nan=False)
-        output.write("\n")
+    """Validate JSON before writing; do not leave a partial summary on error."""
+    content = json.dumps(records, indent=2, allow_nan=False, default=_json_numpy)
+    (output_dir / "summary.json").write_text(content + "\n")
 
 
 def main():
